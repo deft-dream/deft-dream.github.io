@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>标签 — DARKSEC</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/">文章</a>
+      <a href="/tags/" class="active">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <div class="tags-header">
+      <h1>◆ 标签分类</h1>
+      <p style="color:var(--text);margin-top:12px;">按攻击类型和技术方向分类</p>
+    </div>
+
+    <div style="max-width:800px;margin:0 auto;padding-bottom:80px;">
+      <!-- 认证绕过 -->
+      <div class="tag-group" id="auth-bypass">
+        <div class="tag-group-title">◆ 认证绕过 / Authentication Bypass</div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px;">
+          <span class="tag-lg pink">JWT</span>
+          <span class="tag-lg pink">OAuth</span>
+          <span class="tag-lg pink">Session</span>
+          <span class="tag-lg pink">CSRF</span>
+          <span class="tag-lg pink">SSO</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <a href="/posts/jwt-bypass-full-chain.html" class="tag-article-link">
+            <span class="tag-article-date">07.14</span>
+            <span class="tag-article-title">JWT认证绕过全链路：从alg:none到RSA-512分解</span>
+            <span class="tag-article-diff hard">HARD</span>
+          </a>
+          <a href="/posts/oauth-redirect-ato.html" class="tag-article-link">
+            <span class="tag-article-date">06.28</span>
+            <span class="tag-article-title">OAuth 2.0 redirect_uri 绕过 → 账户劫持</span>
+            <span class="tag-article-diff medium">MEDIUM</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- 注入攻击 -->
+      <div class="tag-group" id="injection">
+        <div class="tag-group-title">◆ 注入攻击 / Injection</div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px;">
+          <span class="tag-lg cyan">SQLi</span>
+          <span class="tag-lg cyan">XSS</span>
+          <span class="tag-lg cyan">SSTI</span>
+          <span class="tag-lg cyan">SSRF</span>
+          <span class="tag-lg cyan">XXE</span>
+          <span class="tag-lg cyan">RCE</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <a href="/posts/spring-boot-thymeleaf-ssti.html" class="tag-article-link">
+            <span class="tag-article-date">07.10</span>
+            <span class="tag-article-title">Thymeleaf SSTI → RCE：Spring Boot模板注入实战</span>
+            <span class="tag-article-diff hard">HARD</span>
+          </a>
+          <a href="/posts/sql-injection-automation.html" class="tag-article-link">
+            <span class="tag-article-date">06.10</span>
+            <span class="tag-article-title">SQL注入自动化工具链</span>
+            <span class="tag-article-diff easy">EASY</span>
+          </a>
+          <a href="/posts/xss-bypass-csp.html" class="tag-article-link">
+            <span class="tag-article-date">05.15</span>
+            <span class="tag-article-title">XSS绕过CSP的几种思路</span>
+            <span class="tag-article-diff medium">MEDIUM</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- 权限提升 -->
+      <div class="tag-group" id="privesc">
+        <div class="tag-group-title">◆ 权限提升 / Privilege Escalation</div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px;">
+          <span class="tag-lg purple">IDOR</span>
+          <span class="tag-lg purple">越权访问</span>
+          <span class="tag-lg purple">文件上传</span>
+          <span class="tag-lg purple">提权</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <p style="color:var(--text);font-size:0.9rem;">暂无文章，待补充...</p>
+        </div>
+      </div>
+
+      <!-- 信息泄露 -->
+      <div class="tag-group" id="info-leak">
+        <div class="tag-group-title">◆ 信息泄露 / Information Disclosure</div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px;">
+          <span class="tag-lg yellow">目录遍历</span>
+          <span class="tag-lg yellow">敏感信息</span>
+          <span class="tag-lg yellow">错误配置</span>
+          <span class="tag-lg yellow">API泄露</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <a href="/posts/subdomain-enum-dns-wildcard.html" class="tag-article-link">
+            <span class="tag-article-date">06.20</span>
+            <span class="tag-article-title">子域名枚举与DNS泛解析对抗</span>
+            <span class="tag-article-diff easy">EASY</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- WAF绕过 -->
+      <div class="tag-group" id="waf-bypass">
+        <div class="tag-group-title">◆ WAF绕过 / WAF Bypass</div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px;">
+          <span class="tag-lg green">HTTP协议</span>
+          <span class="tag-lg green">编码绕过</span>
+          <span class="tag-lg green">分块传输</span>
+          <span class="tag-lg green">协议降级</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <a href="/posts/http10-waf-bypass.html" class="tag-article-link">
+            <span class="tag-article-date">07.05</span>
+            <span class="tag-article-title">HTTP/1.0 协议降级绕过WAF</span>
+            <span class="tag-article-diff medium">MEDIUM</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
