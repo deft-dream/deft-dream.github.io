@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>文章标题 — DARKSEC</title>
+<meta name="description" content="文章描述">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 分类 / 子分类</div>
+        <h1>文章标题</h1>
+        <div class="article-meta">
+          <span>📅 YYYY-MM-DD</span>
+          <span>⏱ X min read</span>
+          <span>🏷 标签1 / 标签2</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#section1">章节1</a></li>
+            <li><a href="#section2">章节2</a></li>
+          </ul>
+        </div>
+
+        <h2 id="section1">章节1</h2>
+        <p>内容...</p>
+
+        <h2 id="section2">章节2</h2>
+        <p>内容...</p>
+
+        <pre><code>// 代码示例</code></pre>
+
+        <blockquote>
+          <p>重要提示</p>
+        </blockquote>
+
+        <div class="article-tags">
+          <span class="tag pink">标签1</span>
+          <span class="tag">标签2</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>

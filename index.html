@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DARKSEC — Security Research Lab</title>
+<meta name="description" content="安全研究员的攻防记录：SRC漏洞挖掘、CTF靶场实战、红队技术沉淀">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/" class="active">首页</a>
+      <a href="/posts/">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <!-- Hero Section -->
+    <section class="hero">
+      <div class="hero-tag">// SECURITY RESEARCH LAB</div>
+      <h1>在<span class="neon">黑暗</span>中寻找<br><span class="cyan">光明</span>的漏洞</h1>
+      <p class="hero-desc">SRC漏洞挖掘 · CTF靶场实战 · 红队攻防技术<br>每一篇文章都是一次完整的攻击链复现</p>
+      <div class="hero-stats">
+        <div class="hero-stat">
+          <div class="val" data-count="47">0</div>
+          <div class="label">Writeups</div>
+        </div>
+        <div class="hero-stat">
+          <div class="val" data-count="23">0</div>
+          <div class="label">SRC漏洞</div>
+        </div>
+        <div class="hero-stat">
+          <div class="val" data-count="156">0</div>
+          <div class="label">Flags</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="neon-divider"></div>
+
+    <!-- Content Layout -->
+    <div class="content-layout">
+      <!-- Main Content -->
+      <section class="posts">
+        <div class="section-label">◆ 最新攻防记录</div>
+
+        <a href="/posts/jwt-bypass-full-chain.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.07.14 // 15 min read</span>
+            <span class="post-diff hard">HARD</span>
+          </div>
+          <h3>JWT认证绕过全链路：从alg:none到RSA-512分解</h3>
+          <p>完整复现黑域护航靶场中的JWT破解全过程，涵盖算法混淆、字典爆破、RSA密钥分解等多层攻击。</p>
+          <div class="tags">
+            <span class="tag pink">JWT</span>
+            <span class="tag">认证绕过</span>
+            <span class="tag purple">RSA</span>
+          </div>
+        </a>
+
+        <a href="/posts/spring-boot-thymeleaf-ssti.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.07.10 // 10 min read</span>
+            <span class="post-diff hard">HARD</span>
+          </div>
+          <h3>Thymeleaf SSTI → RCE：Spring Boot模板注入实战</h3>
+          <p>从发现模板路径可控，到构造SpEL表达式执行系统命令，完整SSTI攻击链。</p>
+          <div class="tags">
+            <span class="tag pink">SSTI</span>
+            <span class="tag">RCE</span>
+            <span class="tag">Spring Boot</span>
+          </div>
+        </a>
+
+        <a href="/posts/http10-waf-bypass.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.07.05 // 8 min read</span>
+            <span class="post-diff medium">MEDIUM</span>
+          </div>
+          <h3>HTTP/1.0 协议降级绕过WAF</h3>
+          <p>利用HTTP版本解析差异绕过现代WAF检测，多个真实SRC场景复现。</p>
+          <div class="tags">
+            <span class="tag yellow">WAF绕过</span>
+            <span class="tag">HTTP</span>
+            <span class="tag">SRC</span>
+          </div>
+        </a>
+
+        <a href="/posts/oauth-redirect-ato.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.06.28 // 12 min read</span>
+            <span class="post-diff medium">MEDIUM</span>
+          </div>
+          <h3>OAuth 2.0 redirect_uri 绕过 → 账户劫持</h3>
+          <p>OAuth登录流程中redirect_uri校验缺陷，结合开放重定向实现完整ATO攻击链。</p>
+          <div class="tags">
+            <span class="tag pink">OAuth</span>
+            <span class="tag">ATO</span>
+            <span class="tag">开放重定向</span>
+          </div>
+        </a>
+
+        <a href="/posts/subdomain-enum-dns-wildcard.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.06.20 // 6 min read</span>
+            <span class="post-diff easy">EASY</span>
+          </div>
+          <h3>子域名枚举与DNS泛解析对抗</h3>
+          <p>在SRC实战中如何高效枚举子域名，以及如何识别和处理DNS泛解析的干扰。</p>
+          <div class="tags">
+            <span class="tag">子域名</span>
+            <span class="tag">DNS</span>
+            <span class="tag">信息收集</span>
+          </div>
+        </a>
+
+        <div class="view-all">
+          <a href="/posts/" class="btn-neon">查看所有文章 →</a>
+        </div>
+      </section>
+
+      <!-- Sidebar -->
+      <aside>
+        <div class="sidebar-card">
+          <h4>◆ 攻防时间线</h4>
+          <div class="timeline">
+            <div class="timeline-item">
+              <div class="t-date">2026.07</div>
+              <div class="t-title">JWT全链路突破</div>
+            </div>
+            <div class="timeline-item">
+              <div class="t-date">2026.07</div>
+              <div class="t-title">SSTI → RCE 复现</div>
+            </div>
+            <div class="timeline-item">
+              <div class="t-date">2026.06</div>
+              <div class="t-title">OAuth ATO 攻击链</div>
+            </div>
+            <div class="timeline-item">
+              <div class="t-date">2026.06</div>
+              <div class="t-title">SQL注入自动化</div>
+            </div>
+            <div class="timeline-item">
+              <div class="t-date">2026.05</div>
+              <div class="t-title">XSS绕过CSP</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sidebar-card">
+          <h4>◆ 技法分类</h4>
+          <div class="category-links">
+            <a href="/tags/#auth-bypass" class="cat-link pink">→ 认证绕过 <span class="count">8</span></a>
+            <a href="/tags/#injection" class="cat-link cyan">→ 注入攻击 <span class="count">12</span></a>
+            <a href="/tags/#privesc" class="cat-link purple">→ 权限提升 <span class="count">6</span></a>
+            <a href="/tags/#info-leak" class="cat-link yellow">→ 信息泄露 <span class="count">9</span></a>
+            <a href="/tags/#waf-bypass" class="cat-link">→ WAF绕过 <span class="count">5</span></a>
+          </div>
+        </div>
+
+        <div class="sidebar-card">
+          <h4>◆ 靶场进度</h4>
+          <div class="range-list">
+            <div class="range-item">
+              <span>黑域护航</span>
+              <span class="status done">✓ 已通关</span>
+            </div>
+            <div class="range-item">
+              <span>Pikachu</span>
+              <span class="status done">✓ 已通关</span>
+            </div>
+            <div class="range-item">
+              <span>SQLi-labs</span>
+              <span class="status progress">● 进行中</span>
+            </div>
+            <div class="range-item">
+              <span>XSS挑战</span>
+              <span class="status pending">○ 待开始</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+      <p class="quote">「 漏洞不会消失，只会转移 」</p>
+      <div class="links">
+        <a href="https://github.com/YOUR_USERNAME" target="_blank">GitHub</a>
+        <span>·</span>
+        <a href="/rss.xml">RSS</a>
+        <span>·</span>
+        <a href="mailto:your@email.com">Contact</a>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<script>
+// 数字滚动动画
+function animateCounters() {
+  document.querySelectorAll('.val[data-count]').forEach(el => {
+    const target = parseInt(el.dataset.count);
+    const duration = 2000;
+    const start = Date.now();
+    const timer = setInterval(() => {
+      const progress = Math.min((Date.now() - start) / duration, 1);
+      el.textContent = Math.floor(progress * target);
+      if (progress >= 1) clearInterval(timer);
+    }, 16);
+  });
+}
+
+// 触发动画
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      animateCounters();
+      observer.disconnect();
+    }
+  });
+});
+observer.observe(document.querySelector('.hero-stats'));
+</script>
+</body>
+</html>

