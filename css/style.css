@@ -1129,3 +1129,92 @@ p { font-size: 1em; }
 .article-content pre code {
   font-size: 0.9rem;
 }
+
+/* ==================== Cat Elements ==================== */
+.cat-ascii {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1rem;
+  color: var(--neon-pink);
+  text-shadow: var(--glow-pink);
+  margin-bottom: 16px;
+  line-height: 1.2;
+  white-space: pre;
+}
+
+.cat-card {
+  text-align: center;
+  background: linear-gradient(135deg, rgba(255,45,120,0.08), rgba(180,77,255,0.08));
+  border: 1px solid rgba(255,45,120,0.2);
+}
+
+.cat-emoji {
+  font-size: 3rem;
+  margin-bottom: 12px;
+  animation: catBounce 2s ease-in-out infinite;
+}
+
+@keyframes catBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+.cat-quote {
+  font-size: 0.9rem;
+  color: var(--neon-pink);
+  font-style: italic;
+  margin-bottom: 12px;
+}
+
+.cat-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--neon-cyan);
+}
+
+.status-dot.online {
+  animation: pulse 1.5s ease-in-out infinite;
+  box-shadow: 0 0 8px var(--neon-cyan);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Cat paw hover effect on post cards */
+.post-card::after {
+  content: '🐾';
+  position: absolute;
+  bottom: 12px;
+  right: 16px;
+  font-size: 1.2rem;
+  opacity: 0;
+  transition: all 0.3s ease;
+  transform: translateY(10px);
+}
+
+.post-card:hover::after {
+  opacity: 0.6;
+  transform: translateY(0);
+}
+
+/* Cat cursor on hover */
+.post-card:hover {
+  cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><text y='20' font-size='20'>🐱</text></svg>") 12 12, pointer;
+}
+
+/* Neon green accent for cat elements */
+.neon-green {
+  color: #34d399;
+  text-shadow: 0 0 10px rgba(52,211,153,0.5);
+}

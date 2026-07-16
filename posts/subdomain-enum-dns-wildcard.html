@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>子域名枚举与DNS泛解析 — DARKSEC</title>
+<meta name="description" content="在SRC实战中如何高效枚举子域名">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐱</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> 🐱</a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 信息收集 / 子域名</div>
+        <h1>子域名枚举与DNS泛解析对抗</h1>
+        <div class="article-meta">
+          <span>📅 2026-06-20</span>
+          <span>⏱ 6 min read</span>
+          <span>🏷 子域名 / DNS</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#overview">概述</a></li>
+            <li><a href="#tools">常用工具</a></li>
+            <li><a href="#methods">枚举方法</a></li>
+            <li><a href="#wildcard">DNS泛解析</a></li>
+            <li><a href="#tips">实战技巧</a></li>
+          </ul>
+        </div>
+
+        <h2 id="overview">概述</h2>
+        <p>子域名枚举是SRC漏洞挖掘的第一步。通过收集目标的所有子域名，可以扩大攻击面，发现更多潜在漏洞。</p>
+
+        <blockquote>
+          <p>🐱 猫猫提示：子域名就像猫咪藏起来的玩具，要一个个找出来~</p>
+        </blockquote>
+
+        <h2 id="tools">常用工具</h2>
+
+        <h3>1. Subfinder</h3>
+        <pre><code># 安装
+go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+
+# 使用
+subfinder -d target.com -o subdomains.txt</code></pre>
+
+        <h3>2. Amass</h3>
+        <pre><code># 被动枚举
+amass enum -passive -d target.com -o subs.txt
+
+# 主动枚举（更全面）
+amass enum -active -d target.com -o subs_active.txt</code></pre>
+
+        <h3>3. OneForAll</h3>
+        <pre><code># 国内很好用的工具
+python3 oneforall.py --target target.com run</code></pre>
+
+        <h2 id="methods">枚举方法</h2>
+
+        <h3>1. 暴力枚举</h3>
+        <pre><code># 使用字典
+gobuster dns -d target.com -w wordlist.txt -t 50</code></pre>
+
+        <h3>2. 证书透明度</h3>
+        <pre><code># crt.sh查询
+curl -s "https://crt.sh/?q=%25.target.com&output=json" | jq -r '.[].name_value' | sort -u</code></pre>
+
+        <h3>3. 搜索引擎</h3>
+        <pre><code># Google Hacking
+site:target.com -www
+
+# Shiro/ZoomEye等</code></pre>
+
+        <h3>4. 第三方数据</h3>
+        <pre><code># VirusTotal
+curl -s "https://www.virustotal.com/api/v3/domains/target.com/subdomains" \
+  -H "x-apikey: YOUR_KEY"</code></pre>
+
+        <h2 id="wildcard">DNS泛解析</h2>
+        <p>有些域名配置了泛解析，任何子域名都会解析到同一个IP，导致枚举结果大量误报。</p>
+
+        <h3>检测泛解析</h3>
+        <pre><code># 随机子域名测试
+nslookup random123.target.com
+nslookup random456.target.com
+
+# 如果都解析到同一IP，说明存在泛解析</code></pre>
+
+        <h3>处理泛解析</h3>
+        <pre><code># 方法1：对比响应内容
+# 泛解析的页面通常内容相同
+
+# 方法2：使用工具的泛解析过滤
+subfinder -d target.com -nW
+
+# 方法3：IP黑名单
+# 将泛解析IP加入黑名单，过滤结果</code></pre>
+
+        <h2 id="tips">实战技巧</h2>
+        <ul>
+          <li>多工具交叉验证，取并集</li>
+          <li>关注开发/测试环境子域名（dev, test, staging）</li>
+          <li>检查历史DNS记录（SecurityTrails）</li>
+          <li>关注邮箱服务器域名（mx记录）</li>
+          <li>子域名爆破时注意控制速率，避免被封</li>
+        </ul>
+
+        <div class="article-tags">
+          <span class="tag">子域名</span>
+          <span class="tag">DNS</span>
+          <span class="tag yellow">信息收集</span>
+          <span class="tag">SRC</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB 🐾</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
