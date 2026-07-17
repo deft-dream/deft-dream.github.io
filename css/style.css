@@ -1,3 +1,95 @@
+/* ==================== Cyberpunk Background ==================== */
+body {
+  background: url('/assets/images/cyberpunk-bg.jpg') center/cover no-repeat fixed;
+  min-height: 100vh;
+}
+
+/* 背景遮罩 - 让内容更清晰 */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 5, 16, 0.75);
+  z-index: 0;
+}
+
+/* 内容容器 - 毛玻璃效果 */
+.container {
+  position: relative;
+  z-index: 1;
+  max-width: 1200px;
+  margin: 20px auto;
+  background: rgba(10, 10, 26, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 240, 255, 0.15);
+  border-radius: 16px;
+  box-shadow: 
+    0 0 40px rgba(0, 0, 0, 0.5),
+    0 0 80px rgba(0, 240, 255, 0.05),
+    inset 0 0 60px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+/* 内容区域边框光效 */
+.container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, 
+    transparent, 
+    var(--neon-cyan), 
+    var(--neon-pink), 
+    var(--neon-purple), 
+    transparent
+  );
+  opacity: 0.6;
+}
+
+.container::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, 
+    transparent, 
+    var(--neon-pink), 
+    var(--neon-cyan), 
+    var(--neon-purple), 
+    transparent
+  );
+  opacity: 0.4;
+}
+
+/* 圆角适配 */
+header {
+  border-radius: 16px 16px 0 0;
+}
+
+footer {
+  border-radius: 0 0 16px 16px;
+}
+
+/* 响应式调整 */
+@media (max-width: 1240px) {
+  .container {
+    margin: 10px;
+    border-radius: 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  .container {
+    margin: 5px;
+    border-radius: 8px;
+  }
+}
+
 /* ==================== Cat Paw Cursor ==================== */
 * {
   cursor: url('/assets/images/paw-normal.svg') 16 16, auto;
