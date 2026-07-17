@@ -1859,7 +1859,7 @@ a:hover, button:hover, .post-card:hover, .btn-neon:hover, .tag:hover, .cat-link:
   right: 12px;
   width: 24px;
   height: 24px;
-  background-image: url('/assets/images/cat-no-bg.png');
+  background-image: url('/assets/images/cat-final.png');
   background-size: contain;
   background-repeat: no-repeat;
   opacity: 0;
@@ -1891,7 +1891,7 @@ a:hover, button:hover, [role="button"]:hover {
   right: 12px;
   width: 24px;
   height: 24px;
-  background-image: url('/assets/images/cat-no-bg.png');
+  background-image: url('/assets/images/cat-final.png');
   background-size: contain;
   background-repeat: no-repeat;
   opacity: 0;
