@@ -1,20 +1,32 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 280" width="250" height="280">
   <defs>
-    <radialGradient id="bg" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" style="stop-color:#1a1a3a"/>
-      <stop offset="100%" style="stop-color:#050510"/>
-    </radialGradient>
     <linearGradient id="hair" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#f0f0ff"/>
-      <stop offset="30%" style="stop-color:#d0d0e0"/>
-      <stop offset="70%" style="stop-color:#b0b0c0"/>
-      <stop offset="100%" style="stop-color:#9090a0"/>
+      <stop offset="0%" style="stop-color:#ffffff"/>
+      <stop offset="30%" style="stop-color:#e0e8ff"/>
+      <stop offset="60%" style="stop-color:#c0d0ff"/>
+      <stop offset="100%" style="stop-color:#a0b0e0"/>
+    </linearGradient>
+    <linearGradient id="hair-highlight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#80c0ff;stop-opacity:0.6"/>
+      <stop offset="50%" style="stop-color:#a080ff;stop-opacity:0.4"/>
+      <stop offset="100%" style="stop-color:#ff80c0;stop-opacity:0.3"/>
     </linearGradient>
     <linearGradient id="ear" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" style="stop-color:#d0d0e0"/>
+      <stop offset="0%" style="stop-color:#ffffff"/>
       <stop offset="100%" style="stop-color:#ffb0c8"/>
     </linearGradient>
-    <filter id="glow">
+    <linearGradient id="outfit" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="100%" style="stop-color:#0a0a1a"/>
+    </linearGradient>
+    <filter id="glow-blue">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="glow-red">
       <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
       <feMerge>
         <feMergeNode in="coloredBlur"/>
@@ -23,60 +35,88 @@
     </filter>
   </defs>
   
-  <!-- 背景 -->
-  <circle cx="100" cy="100" r="95" fill="url(#bg)" stroke="#ff2d78" stroke-width="2" opacity="0.8"/>
-  
   <!-- 头发底层 -->
-  <ellipse cx="100" cy="95" rx="65" ry="60" fill="url(#hair)"/>
+  <path d="M60 80 Q80 20 125 15 Q170 20 190 80 L200 180 Q180 200 125 210 Q70 200 50 180 Z" fill="url(#hair)"/>
+  
+  <!-- 头发光效 -->
+  <path d="M80 60 Q100 30 125 25 Q150 30 170 60" fill="url(#hair-highlight)" opacity="0.5"/>
+  <path d="M70 100 Q90 70 125 60 Q160 70 180 100" fill="url(#hair-highlight)" opacity="0.3"/>
+  
+  <!-- 左侧长发 -->
+  <path d="M60 80 Q50 120 45 180 Q50 220 65 250 Q75 240 80 200 Q85 160 80 120 Z" fill="url(#hair)"/>
+  <path d="M55 150 Q60 180 65 210" fill="none" stroke="url(#hair-highlight)" stroke-width="3" opacity="0.5"/>
+  
+  <!-- 右侧长发 -->
+  <path d="M190 80 Q200 120 205 180 Q200 220 185 250 Q175 240 170 200 Q165 160 170 120 Z" fill="url(#hair)"/>
+  <path d="M195 150 Q190 180 185 210" fill="none" stroke="url(#hair-highlight)" stroke-width="3" opacity="0.5"/>
   
   <!-- 猫耳朵 -->
-  <path d="M50 80 L65 30 L85 75" fill="url(#ear)" stroke="#ff2d78" stroke-width="2"/>
-  <path d="M115 75 L135 30 L150 80" fill="url(#ear)" stroke="#ff2d78" stroke-width="2"/>
-  <path d="M58 72 L65 40 L78 70" fill="#ffb0c8" opacity="0.8"/>
-  <path d="M122 70 L135 40 L142 72" fill="#ffb0c8" opacity="0.8"/>
-  
-  <!-- 头发高光 -->
-  <path d="M60 60 Q80 40 100 55" fill="white" opacity="0.2"/>
-  <path d="M70 50 Q90 35 110 50" fill="white" opacity="0.15"/>
+  <path d="M75 75 L90 25 L110 70" fill="url(#ear)" stroke="#ff2d78" stroke-width="1.5"/>
+  <path d="M140 70 L160 25 L175 75" fill="url(#ear)" stroke="#ff2d78" stroke-width="1.5"/>
+  <path d="M82 65 L90 35 L102 62" fill="#ffb0c8" opacity="0.7"/>
+  <path d="M148 62 L160 35 L168 65" fill="#ffb0c8" opacity="0.7"/>
   
   <!-- 脸 -->
-  <ellipse cx="100" cy="110" rx="50" ry="42" fill="#ffe8ee"/>
+  <ellipse cx="125" cy="110" rx="45" ry="40" fill="#ffe8ee"/>
   
   <!-- 眼睛 -->
-  <ellipse cx="80" cy="105" rx="12" ry="14" fill="#00f0ff"/>
-  <ellipse cx="120" cy="105" rx="12" ry="14" fill="#00f0ff"/>
-  <ellipse cx="80" cy="105" rx="10" ry="12" fill="#0080ff"/>
-  <ellipse cx="120" cy="105" rx="10" ry="12" fill="#0080ff"/>
-  <circle cx="83" cy="100" r="4" fill="white"/>
-  <circle cx="123" cy="100" r="4" fill="white"/>
-  <circle cx="77" cy="108" r="2" fill="white" opacity="0.6"/>
-  <circle cx="117" cy="108" r="2" fill="white" opacity="0.6"/>
+  <ellipse cx="105" cy="105" rx="12" ry="14" fill="#8b0000"/>
+  <ellipse cx="145" cy="105" rx="12" ry="14" fill="#8b0000"/>
+  <ellipse cx="105" cy="105" rx="8" ry="10" fill="#cc0000"/>
+  <ellipse cx="145" cy="105" rx="8" ry="10" fill="#cc0000"/>
+  <circle cx="108" cy="100" r="4" fill="white"/>
+  <circle cx="148" cy="100" r="4" fill="white"/>
+  <circle cx="102" cy="108" r="2" fill="white" opacity="0.6"/>
+  <circle cx="142" cy="108" r="2" fill="white" opacity="0.6"/>
   
   <!-- 眼睛高光 -->
-  <ellipse cx="80" cy="105" rx="12" ry="14" fill="none" stroke="#00f0ff" stroke-width="1" filter="url(#glow)"/>
-  <ellipse cx="120" cy="105" rx="12" ry="14" fill="none" stroke="#00f0ff" stroke-width="1" filter="url(#glow)"/>
+  <ellipse cx="105" cy="105" rx="12" ry="14" fill="none" stroke="#ff0040" stroke-width="0.8" filter="url(#glow-red)" opacity="0.5"/>
+  <ellipse cx="145" cy="105" rx="12" ry="14" fill="none" stroke="#ff0040" stroke-width="0.8" filter="url(#glow-red)" opacity="0.5"/>
   
   <!-- 腮红 -->
-  <ellipse cx="62" cy="118" rx="12" ry="6" fill="#ff9ec0" opacity="0.4"/>
-  <ellipse cx="138" cy="118" rx="12" ry="6" fill="#ff9ec0" opacity="0.4"/>
+  <ellipse cx="85" cy="120" rx="10" ry="5" fill="#ff9ec0" opacity="0.4"/>
+  <ellipse cx="165" cy="120" rx="10" ry="5" fill="#ff9ec0" opacity="0.4"/>
   
   <!-- 嘴巴 -->
-  <path d="M90 128 Q100 135 110 128" fill="none" stroke="#ff2d78" stroke-width="2.5" stroke-linecap="round"/>
-  <path d="M95 128 Q100 131 105 128" fill="#ff6b9d" opacity="0.5"/>
+  <path d="M115 130 Q125 136 135 130" fill="none" stroke="#ff2d78" stroke-width="2" stroke-linecap="round"/>
   
   <!-- 猫须 -->
-  <line x1="55" y1="112" x2="30" y2="108" stroke="#d0d0e0" stroke-width="1.5" opacity="0.6"/>
-  <line x1="55" y1="118" x2="30" y2="122" stroke="#d0d0e0" stroke-width="1.5" opacity="0.6"/>
-  <line x1="55" y1="124" x2="32" y2="132" stroke="#d0d0e0" stroke-width="1.5" opacity="0.6"/>
-  <line x1="145" y1="112" x2="170" y2="108" stroke="#d0d0e0" stroke-width="1.5" opacity="0.6"/>
-  <line x1="145" y1="118" x2="170" y2="122" stroke="#d0d0e0" stroke-width="1.5" opacity="0.6"/>
-  <line x1="145" y1="124" x2="168" y2="132" stroke="#d0d0e0" stroke-width="1.5" opacity="0.6"/>
+  <line x1="80" y1="112" x2="55" y2="108" stroke="#d0d0e0" stroke-width="1.2" opacity="0.5"/>
+  <line x1="80" y1="118" x2="55" y2="122" stroke="#d0d0e0" stroke-width="1.2" opacity="0.5"/>
+  <line x1="170" y1="112" x2="195" y2="108" stroke="#d0d0e0" stroke-width="1.2" opacity="0.5"/>
+  <line x1="170" y1="118" x2="195" y2="122" stroke="#d0d0e0" stroke-width="1.2" opacity="0.5"/>
   
-  <!-- 头发装饰（赛博朋克线条） -->
-  <path d="M50 70 Q65 60 80 65" fill="none" stroke="#00f0ff" stroke-width="1" opacity="0.4"/>
-  <path d="M120 65 Q135 60 150 70" fill="none" stroke="#ff2d78" stroke-width="1" opacity="0.4"/>
+  <!-- 身体/服装 -->
+  <path d="M90 150 L80 200 L85 260 L165 260 L170 200 L160 150 Q125 165 90 150" fill="url(#outfit)"/>
   
-  <!-- 霓虹光效 -->
-  <circle cx="80" cy="105" r="15" fill="none" stroke="#00f0ff" stroke-width="0.5" opacity="0.3" filter="url(#glow)"/>
-  <circle cx="120" cy="105" r="15" fill="none" stroke="#00f0ff" stroke-width="0.5" opacity="0.3" filter="url(#glow)"/>
+  <!-- 服装蓝色装饰线 -->
+  <path d="M95 155 L90 200 L95 255" fill="none" stroke="#00f0ff" stroke-width="2" filter="url(#glow-blue)" opacity="0.8"/>
+  <path d="M155 155 L160 200 L155 255" fill="none" stroke="#00f0ff" stroke-width="2" filter="url(#glow-blue)" opacity="0.8"/>
+  <path d="M100 160 L125 170 L150 160" fill="none" stroke="#00f0ff" stroke-width="1.5" filter="url(#glow-blue)" opacity="0.6"/>
+  
+  <!-- 服装细节 -->
+  <rect x="110" y="175" width="30" height="8" rx="2" fill="#1a1a3a" stroke="#00f0ff" stroke-width="1"/>
+  <rect x="115" y="190" width="20" height="6" rx="2" fill="#1a1a3a" stroke="#00f0ff" stroke-width="1"/>
+  
+  <!-- 蓝色发光点 -->
+  <circle cx="125" cy="165" r="3" fill="#00f0ff" filter="url(#glow-blue)" opacity="0.8"/>
+  <circle cx="100" cy="180" r="2" fill="#00f0ff" filter="url(#glow-blue)" opacity="0.6"/>
+  <circle cx="150" cy="180" r="2" fill="#00f0ff" filter="url(#glow-blue)" opacity="0.6"/>
+  
+  <!-- 手臂 -->
+  <path d="M85 160 Q60 180 55 210 Q65 215 80 200 Q90 185 90 170" fill="url(#outfit)" stroke="#00f0ff" stroke-width="1" opacity="0.9"/>
+  <path d="M165 160 Q190 180 195 210 Q185 215 170 200 Q160 185 160 170" fill="url(#outfit)" stroke="#00f0ff" stroke-width="1" opacity="0.9"/>
+  
+  <!-- 手 -->
+  <ellipse cx="55" cy="215" rx="12" ry="10" fill="#ffe8ee"/>
+  <ellipse cx="195" cy="215" rx="12" ry="10" fill="#ffe8ee"/>
+  
+  <!-- 苹果（左手上） -->
+  <circle cx="50" cy="210" r="10" fill="#ff2d78"/>
+  <path d="M50 200 Q53 198 51 202" fill="none" stroke="#34d399" stroke-width="1.5"/>
+  <ellipse cx="48" cy="208" rx="3" ry="1.5" fill="white" opacity="0.3"/>
+  
+  <!-- 头发高光装饰 -->
+  <path d="M90 40 Q100 30 110 35" fill="none" stroke="#00f0ff" stroke-width="1" opacity="0.3"/>
+  <path d="M140 35 Q150 30 160 40" fill="none" stroke="#a080ff" stroke-width="1" opacity="0.3"/>
 </svg>
