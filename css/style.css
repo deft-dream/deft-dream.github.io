@@ -1192,16 +1192,7 @@ p { font-size: 1em; }
 }
 
 /* Cat paw hover effect on post cards */
-.post-card::after {
-  content: '⚡';
-  position: absolute;
-  bottom: 12px;
-  right: 16px;
-  font-size: 1.2rem;
-  opacity: 0;
-  transition: all 0.3s ease;
-  transform: translateY(10px);
-}
+
 
 .post-card:hover::after {
   opacity: 0.6;
@@ -1210,7 +1201,7 @@ p { font-size: 1em; }
 
 /* Cat cursor on hover */
 .post-card:hover {
-  cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><text y='20' font-size='20'>🐱</text></svg>") 12 12, pointer;
+  cursor: url("/assets/images/cat-final.png") 12 12, pointer;
 }
 
 /* Neon green accent for cat elements */
@@ -1295,16 +1286,7 @@ p { font-size: 1em; }
 }
 
 /* Cat Paw Hover Effect */
-.post-card::after {
-  content: '⚡';
-  position: absolute;
-  bottom: 12px;
-  right: 16px;
-  font-size: 1rem;
-  opacity: 0;
-  transition: all 0.3s ease;
-  transform: translateY(10px) rotate(-15deg);
-}
+
 
 .post-card:hover::after {
   opacity: 0.7;
@@ -1474,7 +1456,7 @@ header::before {
 /* Cat Paw Loading Animation */
 @keyframes catPaw {
   0%, 100% { content: '⚡'; }
-  25% { content: '🐱'; }
+  25% { content: url('/assets/images/cat-final.png'); }
   50% { content: '⚡'; }
   75% { content: '😸'; }
 }
@@ -1595,7 +1577,7 @@ body::after {
 
 /* Cat Theme Footer */
 footer::before {
-  content: '🐱 ‧ ‧ ‧ 🐾 ‧ ‧ ‧ 😸';
+  content: '<img src="/assets/images/cat-final.png" alt="cat" style="width:1em;height:1em;vertical-align:middle;display:inline-block;"> ‧ ‧ ‧ <img src="/assets/images/cat-final.png" alt="cat" style="width:1em;height:1em;vertical-align:middle;display:inline-block;"> ‧ ‧ ‧ <img src="/assets/images/cat-final.png" alt="cat" style="width:1em;height:1em;vertical-align:middle;display:inline-block;">';
   display: block;
   text-align: center;
   margin-bottom: 16px;
@@ -1626,7 +1608,7 @@ a:hover {
 }
 
 .cat-quote::before {
-  content: '🐱';
+  content: url('/assets/images/cat-final.png');
   position: absolute;
   left: 0;
   top: 0;
@@ -1844,7 +1826,7 @@ footer {
 
 /* 链接和按钮hover时的猫爪 */
 a:hover, button:hover, .post-card:hover, .btn-neon:hover, .tag:hover, .cat-link:hover {
-  cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'><text y='22' font-size='22'>🐾</text></svg>") 10 10, pointer;
+  cursor: url("/assets/images/cat-final.png") 12 12, pointer;
 }
 
 /* 文章卡片hover时显示小猫图标 */
@@ -1852,20 +1834,7 @@ a:hover, button:hover, .post-card:hover, .btn-neon:hover, .tag:hover, .cat-link:
   position: relative;
 }
 
-.post-card::after {
-  content: '';
-  position: absolute;
-  bottom: 10px;
-  right: 12px;
-  width: 24px;
-  height: 24px;
-  background-image: url('/assets/images/cat-final.png');
-  background-size: contain;
-  background-repeat: no-repeat;
-  opacity: 0;
-  transition: all 0.3s ease;
-  transform: translateY(8px);
-}
+
 
 .post-card:hover::after {
   opacity: 0.7;
@@ -1875,29 +1844,16 @@ a:hover, button:hover, .post-card:hover, .btn-neon:hover, .tag:hover, .cat-link:
 /* ==================== Cat Cursors ==================== */
 /* 全局猫爪光标 */
 body, body * {
-  cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><text y='20' font-size='20'>🐾</text></svg>") 8 8, auto !important;
+  cursor: url("/assets/images/cat-final.png") 8 8, auto !important;
 }
 
 /* 链接和可点击元素hover */
 a:hover, button:hover, [role="button"]:hover {
-  cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'><text y='24' font-size='24'>🐾</text></svg>") 10 10, pointer !important;
+  cursor: url("/assets/images/cat-final.png") 12 12, pointer !important;
 }
 
 /* 文章卡片hover时显示小猫图标 */
-.post-card::after {
-  content: '';
-  position: absolute;
-  bottom: 10px;
-  right: 12px;
-  width: 24px;
-  height: 24px;
-  background-image: url('/assets/images/cat-final.png');
-  background-size: contain;
-  background-repeat: no-repeat;
-  opacity: 0;
-  transition: all 0.3s ease;
-  transform: translateY(8px);
-}
+
 
 .post-card:hover::after {
   opacity: 0.7;
@@ -1907,4 +1863,29 @@ a:hover, button:hover, [role="button"]:hover {
 /* 文章卡片hover时鼠标变为小猫 */
 .post-card:hover {
   cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 100 100'><path d='M30 45 L38 15 L48 42' fill='%23d0d0e0'/><path d='M52 42 L62 15 L70 45' fill='%23d0d0e0'/><ellipse cx='50' cy='55' rx='28' ry='24' fill='%23d0d0e0'/><ellipse cx='40' cy='52' rx='7' ry='8' fill='%238b0000'/><ellipse cx='60' cy='52' rx='7' ry='8' fill='%238b0000'/><circle cx='42' cy='50' r='3' fill='white' opacity='0.8'/><circle cx='62' cy='50' r='3' fill='white' opacity='0.8'/></svg>") 16 16, pointer !important;
+}
+
+/* Post Card Cat Icon */
+.post-card {
+  position: relative;
+}
+
+.post-card::after {
+  content: '';
+  position: absolute;
+  bottom: 10px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  background-image: url('/assets/images/cat-final.png');
+  background-size: contain;
+  background-repeat: no-repeat;
+  opacity: 0;
+  transition: all 0.3s ease;
+  transform: translateY(8px);
+}
+
+.post-card:hover::after {
+  opacity: 0.8;
+  transform: translateY(0);
 }
