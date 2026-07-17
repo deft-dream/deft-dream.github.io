@@ -1853,7 +1853,7 @@ a:hover, button:hover, [role="button"]:hover {
 
 /* 文章卡片hover时鼠标变为小猫 */
 .post-card:hover {
-  cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 100 100'><path d='M30 45 L38 15 L48 42' fill='%23d0d0e0'/><path d='M52 42 L62 15 L70 45' fill='%23d0d0e0'/><ellipse cx='50' cy='55' rx='28' ry='24' fill='%23d0d0e0'/><ellipse cx='40' cy='52' rx='7' ry='8' fill='%238b0000'/><ellipse cx='60' cy='52' rx='7' ry='8' fill='%238b0000'/><circle cx='42' cy='50' r='3' fill='white' opacity='0.8'/><circle cx='62' cy='50' r='3' fill='white' opacity='0.8'/></svg>") 16 16, pointer !important;
+  cursor: url("/assets/images/cat-final.png") 12 12, pointer !important;
 }
 
 /* Post Card Cat Icon */
