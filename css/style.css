@@ -1837,3 +1837,39 @@ footer {
 .footer-content .quote {
   font-size: 0.95rem;
 }
+
+/* ==================== Cat Cursor ==================== */
+/* 全局猫爪光标 */
+* {
+  cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><text y='20' font-size='18'>🐾</text></svg>") 8 8, auto;
+}
+
+/* 链接和按钮hover时的猫爪 */
+a:hover, button:hover, .post-card:hover, .btn-neon:hover, .tag:hover, .cat-link:hover {
+  cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'><text y='22' font-size='22'>🐾</text></svg>") 10 10, pointer;
+}
+
+/* 文章卡片hover时显示小猫图标 */
+.post-card {
+  position: relative;
+}
+
+.post-card::after {
+  content: '';
+  position: absolute;
+  bottom: 10px;
+  right: 12px;
+  width: 24px;
+  height: 24px;
+  background-image: url('/assets/images/favicon-transparent.png');
+  background-size: contain;
+  background-repeat: no-repeat;
+  opacity: 0;
+  transition: all 0.3s ease;
+  transform: translateY(8px);
+}
+
+.post-card:hover::after {
+  opacity: 0.7;
+  transform: translateY(0);
+}
