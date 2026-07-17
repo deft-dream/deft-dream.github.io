@@ -34,7 +34,7 @@
       <p class="hero-desc">SRC漏洞挖掘 · CTF靶场实战 · 红队攻防技术<br>每一篇文章都是一次完整的攻击链复现 ✨</p>
       <div class="hero-stats">
         <div class="hero-stat">
-          <div class="val" data-count="106">0</div>
+          <div class="val" data-count="108">0</div>
           <div class="label">📅 学习天数</div>
         </div>
         <div class="hero-stat">
@@ -42,7 +42,7 @@
           <div class="label">🏆 比赛参与</div>
         </div>
         <div class="hero-stat">
-          <div class="val" data-count="9">0</div>
+          <div class="val" data-count="10">0</div>
           <div class="label">📝 文章总数</div>
         </div>
       </div>
@@ -55,6 +55,15 @@
       <!-- Main Content -->
       <section class="posts">
         <div class="section-label">◆ 最新学习笔记 📚</div>
+
+        <a href="/posts/regex-anchor-auth-bypass.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.07.17 // 10 min read</span>
+            <span class="post-diff hard">HARD</span>
+          </div>
+          <h3>正则锚定缺失→认证绕过：从DN解析到任意用户伪装</h3>
+          <p>一个缺少^锚定的正则，让mTLS证书认证形同虚设。CVE-2026-45063深度分析。</p>
+        </a>
 
         <a href="/posts/prototype-pollution-rce.html" class="post-card">
           <div class="post-top">
@@ -156,6 +165,10 @@
           <div class="timeline">
             <div class="timeline-item">
               <div class="t-date">2026.07.17</div>
+              <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">正则锚定缺失→认证绕过</div>
+            </div>
+            <div class="timeline-item">
+              <div class="t-date">2026.07.17</div>
               <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">原型链污染→RCE</div>
             </div>
             <div class="timeline-item">
@@ -229,11 +242,11 @@
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
               <span style="color:var(--text);">当前技能</span>
-              <span style="color:var(--neon-purple);">JWT破解</span>
+              <span style="color:var(--neon-purple);">正则安全</span>
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;">
               <span style="color:var(--text);">今日目标</span>
-              <span style="color:var(--neon-yellow);">再挖3个洞</span>
+              <span style="color:var(--neon-yellow);">研究CVE-2026-45063</span>
             </div>
           </div>
         </div>
