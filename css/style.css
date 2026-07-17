@@ -1442,3 +1442,220 @@ p { font-size: 1em; }
   box-shadow: 0 0 20px rgba(192, 192, 208, 0.2);
   animation: catFloat 3s ease-in-out infinite;
 }
+
+/* ==================== Cyberpunk Cat Enhanced ==================== */
+
+/* Cat Ears on Header */
+header::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60px;
+  height: 20px;
+  background: linear-gradient(135deg, var(--neon-pink), var(--neon-purple));
+  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+  opacity: 0.6;
+  z-index: 10;
+}
+
+/* Cat Tail Divider */
+.neon-divider::after {
+  content: 'ฅ^•ﻌ•^ฅ';
+  display: block;
+  text-align: center;
+  margin-top: -12px;
+  font-size: 1.2rem;
+  color: var(--neon-pink);
+  text-shadow: 0 0 10px rgba(255, 45, 120, 0.5);
+}
+
+/* Cat Paw Loading Animation */
+@keyframes catPaw {
+  0%, 100% { content: '🐾'; }
+  25% { content: '🐱'; }
+  50% { content: '🐾'; }
+  75% { content: '😸'; }
+}
+
+.loading-cat::after {
+  animation: catPaw 2s ease-in-out infinite;
+}
+
+/* Neon Cat Eyes Effect */
+.hero::before {
+  content: '';
+  position: absolute;
+  top: 20%;
+  left: 10%;
+  width: 8px;
+  height: 8px;
+  background: var(--neon-cyan);
+  border-radius: 50%;
+  box-shadow: 
+    20px 0 0 var(--neon-cyan),
+    0 20px 20px var(--neon-cyan),
+    20px 20px 20px var(--neon-cyan);
+  opacity: 0.3;
+  animation: catEyes 4s ease-in-out infinite;
+}
+
+@keyframes catEyes {
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.2); }
+}
+
+/* Cat Scratch Effect on Hover */
+.post-card:hover::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: 
+    linear-gradient(45deg, transparent 40%, rgba(255, 45, 120, 0.1) 45%, transparent 50%),
+    linear-gradient(-45deg, transparent 40%, rgba(0, 240, 255, 0.1) 45%, transparent 50%);
+  pointer-events: none;
+  animation: scratch 0.3s ease;
+}
+
+@keyframes scratch {
+  0% { opacity: 0; }
+  50% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Cat Whiskers on Tags */
+.tag::before {
+  content: '—';
+  margin-right: 4px;
+  color: inherit;
+  opacity: 0.5;
+}
+
+.tag::after {
+  content: '—';
+  margin-left: 4px;
+  color: inherit;
+  opacity: 0.5;
+}
+
+/* Cyberpunk Cat Paw Prints Background */
+body::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: 
+    radial-gradient(circle at 20% 80%, rgba(255, 45, 120, 0.03) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(0, 240, 255, 0.03) 0%, transparent 50%),
+    radial-gradient(circle at 50% 50%, rgba(180, 77, 255, 0.02) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Cat Status Indicator */
+.cat-status::before {
+  content: '🐾';
+  margin-right: 8px;
+  animation: pawBounce 1s ease-in-out infinite;
+}
+
+@keyframes pawBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+/* Neon Cat Border Effect */
+.sidebar-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.sidebar-card::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, 
+    transparent, 
+    var(--neon-pink), 
+    var(--neon-cyan), 
+    var(--neon-purple), 
+    transparent
+  );
+  opacity: 0.5;
+}
+
+/* Cat Theme Footer */
+footer::before {
+  content: '🐱 ‧ ‧ ‧ 🐾 ‧ ‧ ‧ 😸';
+  display: block;
+  text-align: center;
+  margin-bottom: 16px;
+  font-size: 1.2rem;
+  letter-spacing: 8px;
+  opacity: 0.6;
+}
+
+/* Cat Cursor Effect */
+a:hover {
+  cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><text y='20' font-size='20'>🐾</text></svg>") 12 12, pointer;
+}
+
+/* Cyberpunk Cat Card Glow */
+.cat-card {
+  animation: catGlow 3s ease-in-out infinite;
+}
+
+@keyframes catGlow {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 45, 120, 0.2); }
+  50% { box-shadow: 0 0 20px rgba(255, 45, 120, 0.4), 0 0 40px rgba(0, 240, 255, 0.2); }
+}
+
+/* Cat Quote Styling */
+.cat-quote {
+  position: relative;
+  padding-left: 20px;
+}
+
+.cat-quote::before {
+  content: '🐱';
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+/* Cat Stats Animation */
+.hero-stat:hover .val {
+  animation: catStat 0.5s ease;
+}
+
+@keyframes catStat {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); color: var(--neon-pink); }
+}
+
+/* Cat Tag Cloud */
+.tag-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  padding: 16px 0;
+}
+
+.tag-cloud .tag {
+  transition: all 0.3s ease;
+}
+
+.tag-cloud .tag:hover {
+  transform: translateY(-3px) rotate(-2deg);
+  box-shadow: 0 4px 12px rgba(255, 45, 120, 0.3);
+}
