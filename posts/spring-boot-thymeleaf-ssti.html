@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Thymeleaf SSTI → RCE — DARKSEC</title>
 <meta name="description" content="Spring Boot + Thymeleaf环境下的SSTI攻击链复现">
-<link rel="icon" href="/assets/images/cat-final.png">
+<link rel="icon" type="image/png" href="/assets/images/cat-final.png">
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/style.css">
 </head>
@@ -132,6 +132,13 @@ nc -lvnp 4444</code></pre>
   </main>
 
   <footer>
+      <div style="text-align:center;margin-bottom:16px;">
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+        </div>
     <div class="footer-content">
       <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1em;height:1em;vertical-align:middle;display:inline-block;"></p>
     </div>
