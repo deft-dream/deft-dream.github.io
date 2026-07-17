@@ -1659,3 +1659,181 @@ a:hover {
   transform: translateY(-3px) rotate(-2deg);
   box-shadow: 0 4px 12px rgba(255, 45, 120, 0.3);
 }
+
+/* ==================== Font Size Enhancement ==================== */
+/* 基础字体增大 */
+body {
+  font-size: 17px;
+}
+
+/* 标题字体 */
+h1 { font-size: 2.2rem; }
+h2 { font-size: 1.6rem; }
+h3 { font-size: 1.3rem; }
+h4 { font-size: 1.1rem; }
+
+/* 段落 */
+p { font-size: 1.05rem; }
+
+/* 文章内容 */
+.article-content p {
+  font-size: 1.1rem;
+  line-height: 1.9;
+}
+
+.article-content li {
+  font-size: 1.08rem;
+}
+
+.article-content h2 {
+  font-size: 1.5rem;
+}
+
+.article-content h3 {
+  font-size: 1.25rem;
+}
+
+/* 代码块 */
+.article-content pre code {
+  font-size: 0.95rem;
+}
+
+.article-content code {
+  font-size: 0.95em;
+}
+
+/* 导航 */
+nav a {
+  font-size: 0.8rem;
+}
+
+/* 标签 */
+.tag {
+  font-size: 0.8rem;
+  padding: 5px 14px;
+}
+
+.tag-lg {
+  font-size: 0.95rem;
+  padding: 10px 24px;
+}
+
+/* 文章卡片 */
+.post-card h3 {
+  font-size: 1.2rem;
+}
+
+.post-card p {
+  font-size: 0.95rem;
+}
+
+.post-meta {
+  font-size: 0.8rem;
+}
+
+.post-diff {
+  font-size: 0.7rem;
+}
+
+/* 侧边栏 */
+.sidebar-card h4 {
+  font-size: 0.85rem;
+}
+
+.sidebar-card p {
+  font-size: 0.95rem;
+}
+
+.cat-quote {
+  font-size: 1rem;
+}
+
+/* 时间线 */
+.t-date {
+  font-size: 0.75rem;
+}
+
+.t-title {
+  font-size: 0.9rem;
+}
+
+/* 分类链接 */
+.cat-link {
+  font-size: 0.95rem;
+}
+
+/* 按钮 */
+.btn-neon {
+  font-size: 0.85rem;
+  padding: 14px 36px;
+}
+
+/* Hero区域 */
+.hero h1 {
+  font-size: 2.8rem;
+}
+
+.hero-desc {
+  font-size: 1.1rem;
+}
+
+.hero-stat .val {
+  font-size: 2.8rem;
+}
+
+.hero-stat .label {
+  font-size: 0.85rem;
+}
+
+.hero-tag {
+  font-size: 0.75rem;
+}
+
+/* Section标题 */
+.section-label {
+  font-size: 0.8rem;
+}
+
+/* 文章页面 */
+.article-header h1 {
+  font-size: 2rem;
+}
+
+.article-meta {
+  font-size: 0.85rem;
+}
+
+/* 标签页 */
+.tag-group-title {
+  font-size: 0.9rem;
+}
+
+.tag-article-title {
+  font-size: 1rem;
+}
+
+.tag-article-date {
+  font-size: 0.8rem;
+}
+
+/* 关于页面 */
+.avatar-name {
+  font-size: 2.2rem;
+}
+
+.avatar-title {
+  font-size: 1rem;
+}
+
+.avatar-link {
+  font-size: 0.95rem;
+}
+
+/* 页脚 */
+footer {
+  font-size: 0.85rem;
+}
+
+.footer-content .quote {
+  font-size: 0.95rem;
+}

