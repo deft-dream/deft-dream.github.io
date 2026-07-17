@@ -1,3 +1,36 @@
+
+/* ==================== Cat Paw Cursor ==================== */
+@keyframes pawSqueeze {
+  0%, 100% { cursor: url('/assets/images/paw-open.svg') 16 16, auto; }
+  50% { cursor: url('/assets/images/paw-closed.svg') 16 16, auto; }
+}
+
+/* 所有元素默认使用张开的猫爪 */
+*, *::before, *::after {
+  cursor: url('/assets/images/paw-open.svg') 16 16, auto !important;
+}
+
+/* hover时使用合拢的猫爪 */
+a:hover, a:hover *, 
+button:hover, button:hover *, 
+[role="button"]:hover, [role="button"]:hover *,
+.post-card:hover, .post-card:hover *,
+.btn-neon:hover, .btn-neon:hover *,
+.tag:hover, .tag:hover *,
+.cat-link:hover, .cat-link:hover *,
+.mobile-menu:hover,
+select:hover, input:hover, textarea:hover {
+  cursor: url('/assets/images/paw-closed.svg') 16 16, pointer !important;
+}
+
+/* 可点击元素hover时的动画效果 */
+.post-card, .btn-neon, .tag, .cat-link, a, button {
+  transition: all 0.15s ease;
+}
+
+.post-card:hover, .btn-neon:hover, .tag:hover, .cat-link:hover {
+  transform: scale(0.98);
+}
 /* ==================== DARKSEC Theme ==================== */
 :root {
   --bg: #050510;
