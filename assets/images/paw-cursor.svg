@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- 猫爪主肉垫 -->
+  <ellipse cx="16" cy="20" rx="8" ry="7" fill="#ff9ec0" opacity="0.9"/>
+  
+  <!-- 左上肉垫 -->
+  <ellipse cx="8" cy="10" rx="4" ry="4.5" fill="#ff9ec0" opacity="0.9"/>
+  
+  <!-- 右上肉垫 -->
+  <ellipse cx="24" cy="10" rx="4" ry="4.5" fill="#ff9ec0" opacity="0.9"/>
+  
+  <!-- 左中肉垫 -->
+  <ellipse cx="5" cy="17" rx="3.5" ry="4" fill="#ff9ec0" opacity="0.9"/>
+  
+  <!-- 右中肉垫 -->
+  <ellipse cx="27" cy="17" rx="3.5" ry="4" fill="#ff9ec0" opacity="0.9"/>
+</svg>
