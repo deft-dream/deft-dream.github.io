@@ -1360,3 +1360,85 @@ p { font-size: 1em; }
   font-style: italic;
   opacity: 0.8;
 }
+
+/* ==================== Avatar Section ==================== */
+.avatar-section {
+  text-align: center;
+  padding: 60px 0 40px;
+}
+
+.avatar-img {
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid var(--neon-pink);
+  box-shadow: 0 0 30px rgba(255, 45, 120, 0.3), 0 0 60px rgba(255, 45, 120, 0.1);
+  transition: all 0.3s ease;
+  margin-bottom: 24px;
+}
+
+.avatar-img:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 40px rgba(255, 45, 120, 0.5), 0 0 80px rgba(255, 45, 120, 0.2);
+}
+
+.avatar-name {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: 8px;
+  letter-spacing: 2px;
+}
+
+.avatar-title {
+  font-size: 0.9rem;
+  color: var(--text);
+  margin-bottom: 24px;
+}
+
+.avatar-links {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}
+
+.avatar-link {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  color: var(--neon-cyan);
+  text-decoration: none;
+  padding: 8px 24px;
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  border-radius: 6px;
+  transition: all 0.3s ease;
+}
+
+.avatar-link:hover {
+  background: rgba(0, 240, 255, 0.1);
+  box-shadow: 0 0 15px rgba(0, 240, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+.avatar-link.pink {
+  color: var(--neon-pink);
+  border-color: rgba(255, 45, 120, 0.3);
+}
+
+.avatar-link.pink:hover {
+  background: rgba(255, 45, 120, 0.1);
+  box-shadow: 0 0 15px rgba(255, 45, 120, 0.3);
+}
+
+/* ==================== Cat Hero Image ==================== */
+.hero-cat-img {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin-bottom: 20px;
+  border: 2px solid rgba(192, 192, 208, 0.3);
+  box-shadow: 0 0 20px rgba(192, 192, 208, 0.2);
+  animation: catFloat 3s ease-in-out infinite;
+}
