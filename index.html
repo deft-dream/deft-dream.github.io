@@ -34,7 +34,7 @@
       <p class="hero-desc">SRC漏洞挖掘 · CTF靶场实战 · 红队攻防技术<br>每一篇文章都是一次完整的攻击链复现 ✨</p>
       <div class="hero-stats">
         <div class="hero-stat">
-          <div class="val" data-count="108">0</div>
+          <div class="val" data-count="109">0</div>
           <div class="label">📅 学习天数</div>
         </div>
         <div class="hero-stat">
@@ -42,7 +42,7 @@
           <div class="label">🏆 比赛参与</div>
         </div>
         <div class="hero-stat">
-          <div class="val" data-count="10">0</div>
+          <div class="val" data-count="11">0</div>
           <div class="label">📝 文章总数</div>
         </div>
       </div>
@@ -55,6 +55,15 @@
       <!-- Main Content -->
       <section class="posts">
         <div class="section-label">◆ 最新学习笔记 📚</div>
+
+        <a href="/posts/rest-batch-array-desync.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.07.18 // 12 min read</span>
+            <span class="post-diff hard">HARD</span>
+          </div>
+          <h3>REST API批量端点数组漂移→Pre-Auth RCE</h3>
+          <p>并行数组错位让未认证请求分发到认证处理器，CVE-2026-63030 CVSS 9.8深度分析。</p>
+        </a>
 
         <a href="/posts/regex-anchor-auth-bypass.html" class="post-card">
           <div class="post-top">
@@ -164,6 +173,10 @@
           <h4>◆ 学习时间线 📖</h4>
           <div class="timeline">
             <div class="timeline-item">
+              <div class="t-date">2026.07.18</div>
+              <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">REST API数组漂移攻击</div>
+            </div>
+            <div class="timeline-item">
               <div class="t-date">2026.07.17</div>
               <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">正则锚定缺失→认证绕过</div>
             </div>
@@ -205,7 +218,7 @@
         <div class="sidebar-card">
           <h4>◆ 技法分类 🎯</h4>
           <div class="category-links">
-            <a href="/tags/#auth-bypass" class="cat-link pink">→ 认证绕过 <span class="count">2</span></a>
+            <a href="/tags/#auth-bypass" class="cat-link pink">→ 认证绕过 <span class="count">4</span></a>
             <a href="/tags/#injection" class="cat-link cyan">→ 注入攻击 <span class="count">3</span></a>
             <a href="/tags/#privesc" class="cat-link purple">→ 权限提升 <span class="count">0</span></a>
             <a href="/tags/#info-leak" class="cat-link yellow">→ 信息泄露 <span class="count">1</span></a>
@@ -238,15 +251,15 @@
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
               <span style="color:var(--text);">挖洞心情</span>
-              <span style="color:var(--neon-pink);">✨ 兴奋中</span>
+              <span style="color:var(--neon-pink);">🔥 超级兴奋</span>
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
               <span style="color:var(--text);">当前技能</span>
-              <span style="color:var(--neon-purple);">正则安全</span>
+              <span style="color:var(--neon-purple);">批量端点审计</span>
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;">
               <span style="color:var(--text);">今日目标</span>
-              <span style="color:var(--neon-yellow);">研究CVE-2026-45063</span>
+              <span style="color:var(--neon-yellow);">研究CVE-2026-63030</span>
             </div>
           </div>
         </div>

