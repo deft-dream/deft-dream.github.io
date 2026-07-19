@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+    <link rel="shortcut icon" href="/assets/images/cat-final.png">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>代码生成管线注入：从文件格式到RCE的三层攻击链 — DARKSEC</title>
+<meta name="description" content="深入分析文件格式→动态代码生成→注入攻击链，数据库默认权限反模式，以及脚本引擎FFI层格式字符串漏洞。CVE-2026-9147、CVE-2023-54366、CVE-2024-58366三连击。">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;vertical-align:middle;margin-left:4px;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 注入攻击 / 代码生成管线</div>
+        <h1>代码生成管线注入：从文件格式到RCE的三层攻击链 ⚡</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-19</span>
+          <span>⏱ 15 min read</span>
+          <span>🏷 代码注入 / 格式字符串 / 默认权限</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">概述：三个隐藏在代码管线中的CVE</a></li>
+            <li><a href="#cve1">CVE-2026-9147：文件格式→代码生成→注入</a></li>
+            <li><a href="#cve2">CVE-2023-54366：数据库默认权限"全开"反模式</a></li>
+            <li><a href="#cve3">CVE-2024-58366：脚本引擎FFI层格式字符串漏洞</a></li>
+            <li><a href="#pattern">攻击模式提炼</a></li>
+            <li><a href="#defense">防御思路</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">概述：三个隐藏在代码管线中的CVE 🔍</h2>
+
+        <p>今天分析三个来自不同产品、但共享同一底层逻辑的漏洞。它们的共同特征：<strong>不是传统的注入，而是发生在「数据→代码」转换管线的边界</strong>。开发者把数据当数据处理，但管线某处把它当代码执行了。</p>
+
+        <p>这三个CVE覆盖了三种不同的「数据→危险」转换路径：</p>
+
+        <div style="background:rgba(0,240,255,0.05);border:1px solid var(--border);border-radius:8px;padding:16px;margin:16px 0;">
+          <p style="margin:0;"><strong>🔗 路径一：文件元数据 → 源代码拼接 → exec() 执行</strong><br>
+          <span style="color:var(--text);">CVE-2026-9147 (uproot ROOT文件解析, CVSS 7.8)</span></p>
+          <hr style="border-color:var(--border);margin:12px 0;">
+          <p style="margin:0;"><strong>🔗 路径二：默认配置 → 零认证 → 全量数据访问</strong><br>
+          <span style="color:var(--text);">CVE-2023-54366 (SurrealDB默认权限=FULL, CVSS 8.8)</span></p>
+          <hr style="border-color:var(--border);margin:12px 0;">
+          <p style="margin:0;"><strong>🔗 路径三：用户脚本 → 异常消息 → FFI格式化函数</strong><br>
+          <span style="color:var(--text);">CVE-2024-58366 (SurrealDB rquickjs格式字符串, CVSS 8.5)</span></p>
+        </div>
+
+        <h2 id="cve1">CVE-2026-9147：文件格式→代码生成→注入 📁→💻</h2>
+
+        <h3>场景</h3>
+        <p><code>uproot</code> 是Python生态中读取CERN ROOT文件的核心库（高能物理、粒子物理数据分析的标准格式）。当它读取ROOT文件的 <code>TStreamerInfo</code>（类序列化元数据）时，会根据元数据<strong>动态生成Python类的源代码</strong>，然后用 <code>exec()</code> 执行。</p>
+
+        <h3>漏洞原理</h3>
+
+        <p>关键代码模式：</p>
+
+<pre><code class="language-python"># uproot内部的代码生成逻辑（简化）
+def _generate_class(name, field_names, field_types):
+    source = f"class {name}:\n"        # ← name来自文件元数据
+    source += f"    def __init__(self):\n"
+    for fn, ft in zip(field_names, field_types):
+        source += f"        self.{fn} = None\n"  # ← fn来自文件元数据
+    exec(source, namespace)             # ← 执行生成的代码
+    return namespace[name]</code></pre>
+
+        <p>攻击者构造恶意ROOT文件，将 <code>TStreamerInfo</code> 中的字段名设置为：</p>
+
+<pre><code class="language-python"># 恶意字段名
+field_name = "__init__\n        import os; os.system('id')\n        # "</code></pre>
+
+        <p>拼接后生成的源代码变成：</p>
+
+<pre><code class="language-python">class MaliciousClass:
+    def __init__(self):
+        self.__init__
+        import os; os.system('id')
+        #  = None</code></pre>
+
+        <p><code>exec()</code> 执行时，<code>os.system('id')</code> 被触发。整个攻击链：</p>
+
+        <div style="background:rgba(255,45,120,0.05);border:1px solid rgba(255,45,120,0.2);border-radius:8px;padding:16px;margin:16px 0;">
+          <p style="margin:0;font-family:'JetBrains Mono',monospace;font-size:0.85rem;">
+            📄 恶意ROOT文件<br>
+            → 📋 TStreamerInfo提取字段名(元数据)<br>
+            → 🔧 模板拼接生成Python源代码字符串<br>
+            → ⚡ exec(source) 执行<br>
+            → 💀 os.system('id') RCE
+          </p>
+        </div>
+
+        <h3>为什么这比反序列化更隐蔽？</h3>
+
+        <p>传统的反序列化漏洞（如 <code>pickle.loads()</code>）已经被广泛认知，安全工具链也有了检测能力。但「文件格式→代码生成→执行」这个管线是<strong>三段式</strong>的：</p>
+
+        <ul>
+          <li><strong>第一段</strong>：文件读取 + 元数据提取 — 看起来完全正常</li>
+          <li><strong>第二段</strong>：模板字符串拼接 — 看起来只是字符串操作</li>
+          <li><strong>第三段</strong>：<code>exec()</code> 执行 — 被信任的内部代码</li>
+        </ul>
+
+        <p>每段单独看都合理，但组合起来就是完整的RCE链条。这不是 <code>pickle.loads()</code> 那种「一看就知道危险」的调用，而是 <code>exec(f"class {name}: ...")</code> 这种「看起来像正常的代码生成」。</p>
+
+        <h3>审计方法</h3>
+
+<pre><code class="language-bash"># 搜索所有exec/compile/eval调用
+grep -rn 'exec(' --include='*.py' | grep -v test | grep -v __pycache__
+
+# 追踪exec的参数来源——是否有字符串拼接？
+grep -rn 'exec(f"' --include='*.py'
+grep -rn 'exec("' --include='*.py'
+grep -rn 'compile(f"' --include='*.py'
+
+# 搜索代码生成相关的模式
+grep -rn 'source.*=.*f"' --include='*.py' | grep -i 'class\|def\|import'</code></pre>
+
+        <h2 id="cve2">CVE-2023-54366：数据库默认权限"全开"反模式 🗄️</h2>
+
+        <h3>场景</h3>
+        <p><code>SurrealDB</code> 是一个新兴的多模型数据库，主打「开发者友好」「零配置」。新建的表默认权限策略是 <strong>FULL</strong>——即所有人可读写。</p>
+
+        <h3>为什么"零配置"等于"零安全"？</h3>
+
+        <p>传统RDBMS（PostgreSQL、MySQL）的默认策略：</p>
+
+<pre><code class="language-sql">-- PostgreSQL: 默认拒绝public schema的CREATE
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+
+-- MySQL: 新用户默认无任何权限
+-- 必须显式GRANT</code></pre>
+
+        <p>SurrealDB的默认策略：</p>
+
+<pre><code class="language-sql">-- SurrealDB: 新建表默认所有人可读写
+DEFINE TABLE users;
+-- 等价于
+DEFINE TABLE users PERMISSIONS FOR select, create, update, delete FULL;</code></pre>
+
+        <p>攻击者只需：</p>
+        <ol>
+          <li>连接到SurrealDB实例（HTTP REST API默认无需认证）</li>
+          <li>直接查询所有表：<code>SELECT * FROM users</code></li>
+          <li>直接修改数据：<code>UPDATE users SET role = 'admin'</code></li>
+        </ol>
+
+        <h3>审计方法</h3>
+
+<pre><code class="language-bash"># 检查SurrealDB默认权限
+curl http://target:8000/sql \
+  -H "Accept: application/json" \
+  -d "INFO FOR DB;"
+
+# 检查表权限
+curl http://target:8000/sql \
+  -H "Accept: application/json" \
+  -d "INFO FOR TABLE users;"
+
+# 直接查询（无需认证）
+curl http://target:8000/sql \
+  -H "Accept: application/json" \
+  -H "NS: test" \
+  -H "DB: test" \
+  -d "SELECT * FROM users;"</code></pre>
+
+        <h3>通用模式</h3>
+
+        <p>这个漏洞不是SurrealDB独有的——它是一种<strong>设计反模式</strong>：</p>
+
+        <div style="background:rgba(0,240,255,0.05);border:1px solid var(--border);border-radius:8px;padding:16px;margin:16px 0;">
+          <p style="margin:0;"><strong>🎯 「开发者友好」营销话术</strong> = 跳过安全决策</p>
+          <p style="margin:8px 0 0;"><strong>🎯 「零配置」</strong> = 没有配置 = 没有权限控制 = 全开放</p>
+        </div>
+
+        <p>其他类似产品需要审计：Supabase的anon key默认表权限、MongoDB Atlas的默认网络策略、Fauna的默认collection权限。</p>
+
+        <h2 id="cve3">CVE-2024-58366：脚本引擎FFI层格式字符串漏洞 🔤</h2>
+
+        <h3>场景</h3>
+        <p>SurrealDB嵌入了QuickJS（JavaScript引擎）的Rust绑定 <code>rquickjs</code>。当用户在SurrealDB中写JS脚本触发异常时，异常消息经过Rust FFI传递给C层的格式化函数——而C的 <code>printf</code> 族函数会解释格式化字符。</p>
+
+        <h3>攻击链</h3>
+
+<pre><code class="language-javascript">// SurrealDB中的用户脚本
+// 触发异常，异常消息包含格式化字符
+throw new Error("%s%s%s%s%s%s%n");</code></pre>
+
+        <p>处理链路：</p>
+
+        <div style="background:rgba(255,45,120,0.05);border:1px solid rgba(255,45,120,0.2);border-radius:8px;padding:16px;margin:16px 0;">
+          <p style="margin:0;font-family:'JetBrains Mono',monospace;font-size:0.85rem;">
+            📝 用户JS脚本 throw new Error("%s%s%s%n")<br>
+            → 🦀 rquickjs捕获异常<br>
+            → 🔧 Exception::throw_type(msg) 调用C格式化函数<br>
+            → 💀 printf("%s%s%s%n") → 读栈内存 / 写任意地址
+          </p>
+        </div>
+
+        <h3>核心洞察：格式字符串漏洞没有消失</h3>
+
+        <p>2026年，格式字符串漏洞在C/C++主流代码中几乎绝迹。但它<strong>迁移到了一个新的薄弱点</strong>：脚本引擎的FFI/绑定层。</p>
+
+        <p>这个攻击面存在于：</p>
+        <ul>
+          <li>所有嵌入式脚本引擎（Lua→C、Python→C扩展、JS→QuickJS/V8嵌入）</li>
+          <li>WASM运行时的host function参数格式化</li>
+          <li>数据库UDF的错误处理</li>
+          <li>Rust代码中的 <code>unsafe</code> 块调用C格式化函数</li>
+        </ul>
+
+        <h3>审计方法</h3>
+
+<pre><code class="language-bash"># 在Rust代码库中搜索unsafe块中的格式化调用
+grep -rn 'unsafe' --include='*.rs' | grep -i 'format\|printf\|sprintf'
+
+# 搜索FFI边界上的格式化函数
+grep -rn 'extern "C"' --include='*.rs' -A 5 | grep -i 'format'
+
+# 搜索用户输入传递给格式化函数的路径
+grep -rn 'throw_type\|throw_message' --include='*.rs' | head -20</code></pre>
+
+        <h2 id="pattern">攻击模式提炼 🧠</h2>
+
+        <p>三个CVE的共同底层模式：</p>
+
+        <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+          <thead>
+            <tr style="border-bottom:2px solid var(--border);">
+              <th style="text-align:left;padding:12px 8px;">维度</th>
+              <th style="text-align:left;padding:12px 8px;">CVE-2026-9147</th>
+              <th style="text-align:left;padding:12px 8px;">CVE-2023-54366</th>
+              <th style="text-align:left;padding:12px 8px;">CVE-2024-58366</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:8px;"><strong>信任边界</strong></td>
+              <td style="padding:8px;">文件元数据 → 代码</td>
+              <td style="padding:8px;">默认配置 → 访问控制</td>
+              <td style="padding:8px;">异常消息 → 格式化</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:8px;"><strong>转换错误</strong></td>
+              <td style="padding:8px;">数据当代码执行</td>
+              <td style="padding:8px;">缺省值当安全策略</td>
+              <td style="padding:8px;">用户字符串当格式串</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:8px;"><strong>后果</strong></td>
+              <td style="padding:8px;">RCE</td>
+              <td style="padding:8px;">全量数据泄露/篡改</td>
+              <td style="padding:8px;">内存读写/RCE</td>
+            </tr>
+            <tr>
+              <td style="padding:8px;"><strong>根因</strong></td>
+              <td style="padding:8px;" colspan="3">信任边界错误——在不该信任的地方信任了输入</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2 id="defense">防御思路 🛡️</h2>
+
+        <h3>1. 代码生成管线</h3>
+        <ul>
+          <li>从文件/网络提取的元数据，在拼接到代码模板前<strong>必须做标识符白名单校验</strong>（只允许 <code>[a-zA-Z_][a-zA-Z0-9_]*</code>）</li>
+          <li>避免 <code>exec()</code>/<code>eval()</code>，改用AST构造器或安全的代码生成库</li>
+          <li>如果必须用 <code>exec()</code>，在独立的受限命名空间中执行</li>
+        </ul>
+
+        <h3>2. 默认权限策略</h3>
+        <ul>
+          <li>新资源的默认权限应该是 <strong>NONE</strong> 而非 <strong>FULL</strong></li>
+          <li>强制首次运行时的权限配置向导</li>
+          <li>REST API端点默认要求认证</li>
+        </ul>
+
+        <h3>3. FFI边界安全</h3>
+        <ul>
+          <li>传递给C格式化函数的字符串<strong>必须硬编码格式串</strong>：<code>printf("%s", user_msg)</code> 而非 <code>printf(user_msg)</code></li>
+          <li>Rust的 <code>unsafe</code> 块中调用C函数时，对用户输入做严格审查</li>
+          <li>使用 <code>snprintf</code> + 固定格式串替代 <code>sprintf</code></li>
+        </ul>
+
+        <h3>通用原则</h3>
+
+        <blockquote>
+          <p>「信任边界错误」是最古老也最常见的漏洞类别。每一次数据跨域转换（文件→代码、配置→权限、脚本→FFI），都需要在边界上做显式的安全校验。<br><br>
+          如果你不确定某个输入是否可信——它就是不可信的。🛡️</p>
+        </blockquote>
+
+        <div class="article-tags">
+          <span class="tag pink">代码注入</span>
+          <span class="tag">格式字符串</span>
+          <span class="tag purple">默认权限</span>
+          <span class="tag yellow">CVE</span>
+          <span class="tag cyan">信任边界</span>
+        </div>
+
+        <p style="text-align:center;margin-top:40px;color:var(--text-dim);font-style:italic;">
+          ~ 感谢阅读 nya~ 🐱✨
+        </p>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+      <div style="text-align:center;margin-bottom:16px;">
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+        </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>

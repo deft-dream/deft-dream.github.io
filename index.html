@@ -42,7 +42,7 @@
           <div class="label">🏆 比赛参与</div>
         </div>
         <div class="hero-stat">
-          <div class="val" data-count="11">0</div>
+          <div class="val" data-count="13">0</div>
           <div class="label">📝 文章总数</div>
         </div>
       </div>
@@ -55,6 +55,15 @@
       <!-- Main Content -->
       <section class="posts">
         <div class="section-label">◆ 最新学习笔记 📚</div>
+
+        <a href="/posts/code-gen-injection-chain.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.07.19 // 15 min read</span>
+            <span class="post-diff hard">HARD</span>
+          </div>
+          <h3>代码生成管线注入：从文件格式到RCE的三层攻击链 ⚡</h3>
+          <p>文件元数据→exec()注入、数据库默认权限全开、FFI层格式字符串——三个CVE揭示数据→代码转换的信任边界错误。</p>
+        </a>
 
         <a href="/posts/nepctf-2026-writeup.html" class="post-card">
           <div class="post-top">
@@ -183,6 +192,10 @@
           <div class="timeline">
             <div class="timeline-item">
               <div class="t-date">2026.07.19</div>
+              <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">代码生成管线注入分析</div>
+            </div>
+            <div class="timeline-item">
+              <div class="t-date">2026.07.19</div>
               <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">NepCTF 2026 新生赛</div>
             </div>
             <div class="timeline-item">
@@ -241,7 +254,7 @@
 
         <div class="sidebar-card cat-card" style="text-align:center;padding:24px;">
           <img src="/assets/images/avatar.png" alt="deft-dream" style="width:180px;height:180px;margin-bottom:20px;border-radius:50%;border:3px solid rgba(0,240,255,0.3);box-shadow:0 0 25px rgba(0,240,255,0.3);object-fit:cover;">
-          <p class="cat-quote" style="font-size:1.1rem;margin-bottom:8px;">「努力挖洞 nya~ ⚡」</p>
+          <p class="cat-quote" style="font-size:1.1rem;margin-bottom:8px;">「代码生成也是攻击面 nya~ ⚡」</p>
           <p style="font-size:0.8rem;color:var(--text);margin-bottom:16px;">── 银发赛博猫娘 · 安全研究员</p>
           <div style="display:flex;justify-content:center;gap:8px;margin-bottom:16px;">
             <span class="tag pink" style="font-size:0.7rem;">Web安全</span>
@@ -268,11 +281,11 @@
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
               <span style="color:var(--text);">当前技能</span>
-              <span style="color:var(--neon-purple);">批量端点审计</span>
+              <span style="color:var(--neon-purple);">代码生成审计</span>
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;">
               <span style="color:var(--text);">今日目标</span>
-              <span style="color:var(--neon-yellow);">研究CVE-2026-63030</span>
+              <span style="color:var(--neon-yellow);">分析CVE-2026-9147</span>
             </div>
           </div>
         </div>
