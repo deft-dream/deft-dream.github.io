@@ -11,6 +11,15 @@
 <link rel="shortcut icon" href="/assets/images/cat-final.png">
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/style.css">
+<style>
+.spoiler{position:relative;display:inline-block;cursor:pointer}
+.spoiler .spoiler-blur{filter:blur(8px);user-select:none;transition:filter .3s}
+.spoiler .spoiler-label{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(255,45,120,.15);border:1px solid rgba(255,45,120,.4);color:#ff2d78;padding:4px 16px;border-radius:4px;font-size:.8rem;white-space:nowrap;z-index:2;pointer-events:none;transition:opacity .3s}
+.spoiler.revealed .spoiler-blur{filter:blur(0)}
+.spoiler.revealed .spoiler-label{opacity:0}
+pre .spoiler{display:block}
+pre .spoiler .spoiler-label{font-size:.75rem;padding:2px 12px}
+</style>
 </head>
 <body>
 <div class="container">
@@ -65,7 +74,7 @@
         <h2 id="signin">📝 签到题 (53372分)</h2>
         <p>签到题是一道基础的密码学/编码题，flag 格式为 <code>flag{...}</code>。</p>
         <p>通过分析题目给出的提示，解码后获得 flag：</p>
-        <pre><code>flag{58aefa8caa824762aa5daa0bf1787431}</code></pre>
+        <pre><code><span class="spoiler" onclick="this.classList.toggle('revealed')"><span class="spoiler-blur">flag{58aefa8caa824762aa5daa0bf1787431}</span><span class="spoiler-label">🐱 点击查看 Flag</span></span></code></pre>
 
         <!-- Prototype Preview -->
         <h2 id="proto">🔗 Prototype Preview (24172分)</h2>
@@ -83,7 +92,7 @@
   }
 }</code></pre>
         <p>当应用渲染模板时，注入的代码被执行，成功读取 flag：</p>
-        <pre><code>flag{9e784bf015e14aa0a29ffee5befe53c6}</code></pre>
+        <pre><code><span class="spoiler" onclick="this.classList.toggle('revealed')"><span class="spoiler-blur">flag{9e784bf015e14aa0a29ffee5befe53c6}</span><span class="spoiler-label">🐱 点击查看 Flag</span></span></code></pre>
 
         <!-- 挂钩 -->
         <h2 id="hooks">🪝 挂钩都在干什么呢 (32721分)</h2>
@@ -111,7 +120,7 @@ ws://target:32721/
 {"type":"custom","event":"fetchModule","data":{"path":"/flag","id":"/flag"}}</code></pre>
 
         <p>服务器返回了文件内容，成功获取 flag：</p>
-        <pre><code>flag{AN@1yz1Ng_perFECt_bO0k-CIu6-3xPERI3NcEa40}</code></pre>
+        <pre><code><span class="spoiler" onclick="this.classList.toggle('revealed')"><span class="spoiler-blur">flag{AN@1yz1Ng_perFECt_bO0k-CIu6-3xPERI3NcEa40}</span><span class="spoiler-label">🐱 点击查看 Flag</span></span></code></pre>
 
         <blockquote>
           <p>💡 关键发现：Vite 的 <code>fs.allow</code> 配置只在 HTTP 层生效，HMR WebSocket 的 <code>fetchModule</code> 操作可以绕过这个限制。这是一个典型的"协议层绕过"漏洞。</p>
