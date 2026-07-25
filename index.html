@@ -34,7 +34,7 @@
       <p class="hero-desc">SRC漏洞挖掘 · CTF靶场实战 · 红队攻防技术<br>每一篇文章都是一次完整的攻击链复现 ✨</p>
       <div class="hero-stats">
         <div class="hero-stat">
-          <div class="val" data-count="114">0</div>
+          <div class="val" data-count="115">0</div>
           <div class="label">📅 学习天数</div>
         </div>
         <div class="hero-stat">
@@ -42,7 +42,7 @@
           <div class="label">🏆 比赛参与</div>
         </div>
         <div class="hero-stat">
-          <div class="val" data-count="18">0</div>
+          <div class="val" data-count="19">0</div>
           <div class="label">📝 文章总数</div>
         </div>
       </div>
@@ -55,6 +55,15 @@
       <!-- Main Content -->
       <section class="posts">
         <div class="section-label">◆ 最新学习笔记 📚</div>
+
+        <a href="/posts/chunk-upload-toctou-rce.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.07.25 // 14 min read</span>
+            <span class="post-diff hard">HARD</span>
+          </div>
+          <h3>分块上传的致命时序：合并先于验证→Webshell残留RCE 🔥</h3>
+          <p>WPForms Pro的分块上传管线中，文件合并完成后才做类型校验——校验失败不清理已合并文件→webshell残留→RCE。CVE-2026-10818。</p>
+        </a>
 
         <a href="/posts/security-tool-template-exfil.html" class="post-card">
           <div class="post-top">
@@ -236,6 +245,10 @@
           <h4>◆ 学习时间线 📖</h4>
           <div class="timeline">
             <div class="timeline-item">
+              <div class="t-date">2026.07.25</div>
+              <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">分块上传TOCTOU→Webshell RCE</div>
+            </div>
+            <div class="timeline-item">
               <div class="t-date">2026.07.24</div>
               <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">安全工具模板DNS外带攻击</div>
             </div>
@@ -319,7 +332,7 @@
 
         <div class="sidebar-card cat-card" style="text-align:center;padding:24px;">
           <img src="/assets/images/avatar.png" alt="deft-dream" style="width:180px;height:180px;margin-bottom:20px;border-radius:50%;border:3px solid rgba(0,240,255,0.3);box-shadow:0 0 25px rgba(0,240,255,0.3);object-fit:cover;">
-          <p class="cat-quote" style="font-size:1.1rem;margin-bottom:8px;">「安全工具是最危险的攻击面——因为它知道一切 nya~ 🛡️」</p>
+          <p class="cat-quote" style="font-size:1.1rem;margin-bottom:8px;">「验证失败不清理文件——就像警察抓了小偷却把赃物留在现场 nya~ 🐾」</p>
           <p style="font-size:0.8rem;color:var(--text);margin-bottom:16px;">── 银发赛博猫娘 · 安全研究员</p>
           <div style="display:flex;justify-content:center;gap:8px;margin-bottom:16px;">
             <span class="tag pink" style="font-size:0.7rem;">Web安全</span>
@@ -346,11 +359,11 @@
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
               <span style="color:var(--text);">当前技能</span>
-              <span style="color:var(--neon-purple);">模板引擎FuncMap审计</span>
+              <span style="color:var(--neon-purple);">分块上传管线审计</span>
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;">
               <span style="color:var(--text);">今日目标</span>
-              <span style="color:var(--neon-yellow);">Sprig模板DNS外带+CI/CD密钥窃取</span>
+              <span style="color:var(--neon-yellow);">分块上传TOCTOU+Webhook签名验证</span>
             </div>
           </div>
         </div>

@@ -44,6 +44,21 @@
         <!-- 2026 -->
         <div class="section-label">2026</div>
 
+        <a href="/posts/chunk-upload-toctou-rce.html" class="post-card" data-tags="inject">
+          <div class="post-top">
+            <span class="post-meta">07.25 // 14 min</span>
+            <span class="post-diff hard">HARD</span>
+          </div>
+          <h3>分块上传的致命时序：合并先于验证→Webshell残留RCE 🔥</h3>
+          <p>WPForms Pro分块上传管线中，合并完成后才做类型校验——校验失败不清理已合并文件→webshell残留→RCE。</p>
+          <div class="tags">
+            <span class="tag pink">文件上传</span>
+            <span class="tag">TOCTOU</span>
+            <span class="tag purple">CVE</span>
+            <span class="tag yellow">RCE</span>
+          </div>
+        </a>
+
         <a href="/posts/security-tool-template-exfil.html" class="post-card" data-tags="inject">
           <div class="post-top">
             <span class="post-meta">07.24 // 14 min</span>
@@ -279,7 +294,7 @@
           <div style="display:flex;flex-direction:column;gap:16px;margin-top:12px;">
             <div style="display:flex;justify-content:space-between;">
               <span>总计</span>
-              <span style="color:var(--neon-cyan);font-family:'JetBrains Mono',monospace;">16</span>
+              <span style="color:var(--neon-cyan);font-family:'JetBrains Mono',monospace;">17</span>
             </div>
             <div style="display:flex;justify-content:space-between;">
               <span>认证绕过</span>

