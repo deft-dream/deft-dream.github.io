@@ -34,7 +34,7 @@
       <p class="hero-desc">SRC漏洞挖掘 · CTF靶场实战 · 红队攻防技术<br>每一篇文章都是一次完整的攻击链复现 ✨</p>
       <div class="hero-stats">
         <div class="hero-stat">
-          <div class="val" data-count="118">0</div>
+          <div class="val" data-count="119">0</div>
           <div class="label">📅 学习天数</div>
         </div>
         <div class="hero-stat">
@@ -42,7 +42,7 @@
           <div class="label">🏆 比赛参与</div>
         </div>
         <div class="hero-stat">
-          <div class="val" data-count="22">0</div>
+          <div class="val" data-count="23">0</div>
           <div class="label">📝 文章总数</div>
         </div>
       </div>
@@ -55,6 +55,15 @@
       <!-- Main Content -->
       <section class="posts">
         <div class="section-label">◆ 最新学习笔记 📚</div>
+
+        <a href="/posts/two-pass-clobber-jar-fd-supply-chain.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.07.29 // 22 min read</span>
+            <span class="post-diff hard">HARD</span>
+          </div>
+          <h3>求值状态错配、ClassLoader滥用、跨生态凭证链、协议端点反序列化 🐱⚡</h3>
+          <p>nginx两阶段捕获组覆盖堆溢出、Fastjson注解探针远程JAR链、CI/CD单一凭证跨生态传播、SharePoint WS-Federation反序列化RCE——四枚CVE揭示「多阶段处理+共享状态」的系统性漏洞模式。</p>
+        </a>
 
         <a href="/posts/trust-boundary-catastrophe-quartet.html" class="post-card">
           <div class="post-top">
@@ -272,6 +281,10 @@
           <h4>◆ 学习时间线 📖</h4>
           <div class="timeline">
             <div class="timeline-item">
+              <div class="t-date">2026.07.29</div>
+              <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">两阶段状态错配+ClassLoader滥用+跨生态凭证链+WS-Fed反序列化</div>
+            </div>
+            <div class="timeline-item">
               <div class="t-date">2026.07.28</div>
               <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">信任边界四重崩塌：CI/CD+LLM+Kernel+代码注入</div>
             </div>
@@ -362,7 +375,7 @@
           <h4>◆ 技法分类 🎯</h4>
           <div class="category-links">
             <a href="/tags/#auth-bypass" class="cat-link pink">→ 认证绕过 <span class="count">7</span></a>
-            <a href="/tags/#injection" class="cat-link cyan">→ 注入攻击 <span class="count">12</span></a>
+            <a href="/tags/#injection" class="cat-link cyan">→ 注入攻击 <span class="count">13</span></a>
             <a href="/tags/#privesc" class="cat-link purple">→ 权限提升 <span class="count">0</span></a>
             <a href="/tags/#info-leak" class="cat-link yellow">→ 信息泄露 <span class="count">1</span></a>
             <a href="/tags/#waf-bypass" class="cat-link green">→ WAF绕过 <span class="count">1</span></a>
@@ -371,7 +384,7 @@
 
         <div class="sidebar-card cat-card" style="text-align:center;padding:24px;">
           <img src="/assets/images/avatar.png" alt="deft-dream" style="width:180px;height:180px;margin-bottom:20px;border-radius:50%;border:3px solid rgba(0,240,255,0.3);box-shadow:0 0 25px rgba(0,240,255,0.3);object-fit:cover;">
-          <p class="cat-quote" style="font-size:1.1rem;margin-bottom:8px;">「信任不是二元的——同一份数据换个上下文就是攻击向量 nya~ 🐾」</p>
+          <p class="cat-quote" style="font-size:1.1rem;margin-bottom:8px;">「多阶段管线的中间状态是最隐蔽的攻击面——度量≠实际就是漏洞 nya~ 🐾」</p>
           <p style="font-size:0.8rem;color:var(--text);margin-bottom:16px;">── 银发赛博猫娘 · 安全研究员</p>
           <div style="display:flex;justify-content:center;gap:8px;margin-bottom:16px;">
             <span class="tag pink" style="font-size:0.7rem;">Web安全</span>
@@ -398,11 +411,11 @@
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
               <span style="color:var(--text);">当前技能</span>
-              <span style="color:var(--neon-purple);">CI/CD信任边界审计</span>
+              <span style="color:var(--neon-purple);">两阶段状态一致性审计</span>
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;">
               <span style="color:var(--text);">今日目标</span>
-              <span style="color:var(--neon-yellow);">Fork投毒+LLM XSS+内核UaF+代码注入</span>
+              <span style="color:var(--neon-yellow);">nginx堆溢出+Fastjson JAR链+CI/CD凭证链+WS-Fed反序列化</span>
             </div>
           </div>
         </div>
