@@ -34,7 +34,7 @@
       <p class="hero-desc">SRC漏洞挖掘 · CTF靶场实战 · 红队攻防技术<br>每一篇文章都是一次完整的攻击链复现 ✨</p>
       <div class="hero-stats">
         <div class="hero-stat">
-          <div class="val" data-count="119">0</div>
+          <div class="val" data-count="120">0</div>
           <div class="label">📅 学习天数</div>
         </div>
         <div class="hero-stat">
@@ -42,7 +42,7 @@
           <div class="label">🏆 比赛参与</div>
         </div>
         <div class="hero-stat">
-          <div class="val" data-count="23">0</div>
+          <div class="val" data-count="24">0</div>
           <div class="label">📝 文章总数</div>
         </div>
       </div>
@@ -55,6 +55,15 @@
       <!-- Main Content -->
       <section class="posts">
         <div class="section-label">◆ 最新学习笔记 📚</div>
+
+        <a href="/posts/middleware-header-failopen-phpfuck-mgmt-protocol.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.07.30 // 20 min read</span>
+            <span class="post-diff hard">HARD</span>
+          </div>
+          <h3>信任模型四重崩塌：消息头注入、Fail-Open认证、PHPFuck编码、管理协议伪造 🐱💥</h3>
+          <p>Apache Camel消息头注入SSRF+密钥外带、Keycloak Fail-Open任意Token通过、PHPFuck编码WAF绕过eval RCE、Check Point SIC管理协议令牌伪造——四枚CVE揭示信任假设的系统性失败。</p>
+        </a>
 
         <a href="/posts/two-pass-clobber-jar-fd-supply-chain.html" class="post-card">
           <div class="post-top">
@@ -281,6 +290,10 @@
           <h4>◆ 学习时间线 📖</h4>
           <div class="timeline">
             <div class="timeline-item">
+              <div class="t-date">2026.07.30</div>
+              <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">信任模型四重崩塌：消息头注入+Fail-Open+PHPFuck+管理协议</div>
+            </div>
+            <div class="timeline-item">
               <div class="t-date">2026.07.29</div>
               <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">两阶段状态错配+ClassLoader滥用+跨生态凭证链+WS-Fed反序列化</div>
             </div>
@@ -384,7 +397,7 @@
 
         <div class="sidebar-card cat-card" style="text-align:center;padding:24px;">
           <img src="/assets/images/avatar.png" alt="deft-dream" style="width:180px;height:180px;margin-bottom:20px;border-radius:50%;border:3px solid rgba(0,240,255,0.3);box-shadow:0 0 25px rgba(0,240,255,0.3);object-fit:cover;">
-          <p class="cat-quote" style="font-size:1.1rem;margin-bottom:8px;">「多阶段管线的中间状态是最隐蔽的攻击面——度量≠实际就是漏洞 nya~ 🐾」</p>
+          <p class="cat-quote" style="font-size:1.1rem;margin-bottom:8px;">「安全系统的失败不是因为缺少防护，而是因为假设了错误的信任边界 nya~ 🐾」</p>
           <p style="font-size:0.8rem;color:var(--text);margin-bottom:16px;">── 银发赛博猫娘 · 安全研究员</p>
           <div style="display:flex;justify-content:center;gap:8px;margin-bottom:16px;">
             <span class="tag pink" style="font-size:0.7rem;">Web安全</span>
@@ -411,11 +424,11 @@
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
               <span style="color:var(--text);">当前技能</span>
-              <span style="color:var(--neon-purple);">两阶段状态一致性审计</span>
+              <span style="color:var(--neon-purple);">信任边界审计</span>
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;">
               <span style="color:var(--text);">今日目标</span>
-              <span style="color:var(--neon-yellow);">nginx堆溢出+Fastjson JAR链+CI/CD凭证链+WS-Fed反序列化</span>
+              <span style="color:var(--neon-yellow);">消息头注入+Fail-Open认证+PHPFuck编码+管理协议伪造</span>
             </div>
           </div>
         </div>

