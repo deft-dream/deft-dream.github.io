@@ -34,7 +34,7 @@
       <p class="hero-desc">SRC漏洞挖掘 · CTF靶场实战 · 红队攻防技术<br>每一篇文章都是一次完整的攻击链复现 ✨</p>
       <div class="hero-stats">
         <div class="hero-stat">
-          <div class="val" data-count="121">0</div>
+          <div class="val" data-count="122">0</div>
           <div class="label">📅 学习天数</div>
         </div>
         <div class="hero-stat">
@@ -42,7 +42,7 @@
           <div class="label">🏆 比赛参与</div>
         </div>
         <div class="hero-stat">
-          <div class="val" data-count="25">0</div>
+          <div class="val" data-count="26">0</div>
           <div class="label">📝 文章总数</div>
         </div>
       </div>
@@ -55,6 +55,15 @@
       <!-- Main Content -->
       <section class="posts">
         <div class="section-label">◆ 最新学习笔记 📚</div>
+
+        <a href="/posts/impl-confusion-quartet.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.08.01 // 22 min read</span>
+            <span class="post-diff hard">HARD</span>
+          </div>
+          <h3>实现层混淆四重奏：环境变量注入、Unicode归一化绕过、子引擎状态重置、WCHAR/Byte错配 🐱💥</h3>
+          <p>GNU Inetutils telnetd USER=-f root认证绕过、Windows Kerberos Unicode归一化差异反射防护绕过、nginx rewrite子引擎is_args状态重置堆溢出、Netlogon CLDAP WCHAR/byte混淆栈溢出——四枚CVSS 9.8揭示实现层混淆的系统性威胁。</p>
+        </a>
 
         <a href="/posts/mvc-xor-otc-auth-triple.html" class="post-card">
           <div class="post-top">
@@ -299,6 +308,10 @@
           <h4>◆ 学习时间线 📖</h4>
           <div class="timeline">
             <div class="timeline-item">
+              <div class="t-date">2026.08.01</div>
+              <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">实现层混淆四重奏：环境变量注入+Unicode归一化+子引擎重置+WCHAR错配</div>
+            </div>
+            <div class="timeline-item">
               <div class="t-date">2026.07.31</div>
               <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">MVC方法直调绕过+XOR密钥流恢复+OTC会话解绑</div>
             </div>
@@ -401,7 +414,7 @@
           <h4>◆ 技法分类 🎯</h4>
           <div class="category-links">
             <a href="/tags/#auth-bypass" class="cat-link pink">→ 认证绕过 <span class="count">8</span></a>
-            <a href="/tags/#injection" class="cat-link cyan">→ 注入攻击 <span class="count">13</span></a>
+            <a href="/tags/#injection" class="cat-link cyan">→ 注入攻击 <span class="count">14</span></a>
             <a href="/tags/#privesc" class="cat-link purple">→ 权限提升 <span class="count">0</span></a>
             <a href="/tags/#info-leak" class="cat-link yellow">→ 信息泄露 <span class="count">1</span></a>
             <a href="/tags/#waf-bypass" class="cat-link green">→ WAF绕过 <span class="count">1</span></a>
@@ -410,7 +423,7 @@
 
         <div class="sidebar-card cat-card" style="text-align:center;padding:24px;">
           <img src="/assets/images/avatar.png" alt="deft-dream" style="width:180px;height:180px;margin-bottom:20px;border-radius:50%;border:3px solid rgba(0,240,255,0.3);box-shadow:0 0 25px rgba(0,240,255,0.3);object-fit:cover;">
-          <p class="cat-quote" style="font-size:1.1rem;margin-bottom:8px;">「MVC公共方法就是暴露的HTTP端点——校验在A方法，执行在B方法，攻击者直奔B nya~ 🐾」</p>
+          <p class="cat-quote" style="font-size:1.1rem;margin-bottom:8px;">「环境变量是另一种命令行参数——子进程分不清值和选项，攻击者就能注入nya~ 🐾」</p>
           <p style="font-size:0.8rem;color:var(--text);margin-bottom:16px;">── 银发赛博猫娘 · 安全研究员</p>
           <div style="display:flex;justify-content:center;gap:8px;margin-bottom:16px;">
             <span class="tag pink" style="font-size:0.7rem;">Web安全</span>
@@ -437,11 +450,11 @@
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
               <span style="color:var(--text);">当前技能</span>
-              <span style="color:var(--neon-purple);">MVC审计+XOR分析</span>
+              <span style="color:var(--neon-purple);">CLI注入+Unicode审计+溢出分析</span>
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;">
               <span style="color:var(--text);">今日目标</span>
-              <span style="color:var(--neon-yellow);">MVC分离控制器绕过+XOR密钥流恢复+OTC会话解绑</span>
+              <span style="color:var(--neon-yellow);">telnetd环境变量注入+Kerberos归一化绕过+nginx堆溢出+Netlogon栈溢出</span>
             </div>
           </div>
         </div>

