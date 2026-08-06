@@ -34,7 +34,7 @@
       <p class="hero-desc">SRC漏洞挖掘 · CTF靶场实战 · 红队攻防技术<br>每一篇文章都是一次完整的攻击链复现 ✨</p>
       <div class="hero-stats">
         <div class="hero-stat">
-          <div class="val" data-count="126">0</div>
+          <div class="val" data-count="128">0</div>
           <div class="label">📅 学习天数</div>
         </div>
         <div class="hero-stat">
@@ -42,7 +42,7 @@
           <div class="label">🏆 比赛参与</div>
         </div>
         <div class="hero-stat">
-          <div class="val" data-count="29">0</div>
+          <div class="val" data-count="30">0</div>
           <div class="label">📝 文章总数</div>
         </div>
       </div>
@@ -56,12 +56,27 @@
       <section class="posts">
         <div class="section-label">◆ 最新学习笔记 📚</div>
 
+        <a href="/posts/sandbox-boundary-quartet.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.08.06 // 22 min read</span>
+            <span class="post-diff hard">HARD</span>
+          </div>
+          <h3>沙箱与边界四重突破：Unicode同形字、DevTools RPC、硬件签名截断、OAuth刷新绕过 🐱💥</h3>
+          <p>CVE-2026-70470 Unicode同形字沙箱逃逸、CVE-2026-71319 DevTools WebSocket跨域RCE、CVE-2026-65058 硬件签名截断绕过、CVE-2026-70478 OAuth刷新白名单凭证窃取。</p>
+          <div class="tags">
+            <span class="tag pink">Unicode</span>
+            <span class="tag">DevTools</span>
+            <span class="tag purple">硬件安全</span>
+            <span class="tag yellow">CVE</span>
+          </div>
+        </a>
+
         <a href="/posts/implicit-trust-quartet.html" class="post-card">
           <div class="post-top">
             <span class="post-meta">2026.08.05 // 20 min read</span>
             <span class="post-diff hard">HARD</span>
           </div>
-          <h3>隐式信任四重崩塌：Git钩子注入、OAuth2 Scope越权、K8s Confused Deputy、Python反序列化 🐱💥</h3>
+          <h3>沙箱与边界四重突破：Git钩子注入、OAuth2 Scope越权、K8s Confused Deputy、Python反序列化 🐱💥</h3>
           <p>Gitea Git hook注入RCE(CVSS 9.8)、OpenEMR OAuth2动态客户端注册FHIR scope提升、Kubernetes ClusterCurator命名空间→集群admin提权、kotaemon __type__反序列化RCE——四枚CVE揭示隐式信任的系统性崩塌。</p>
           <div class="tags">
             <span class="tag pink">Git安全</span>
@@ -498,64 +513,3 @@
               <span style="color:var(--neon-pink);">🔥 超级兴奋</span>
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
-              <span style="color:var(--text);">当前技能</span>
-              <span style="color:var(--neon-purple);">协议层审计+内核竞态+反序列化多态</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;padding:8px 0;">
-              <span style="color:var(--text);">今日目标</span>
-              <span style="color:var(--neon-yellow);">gRPC :path规范化绕过+页缓存COW逃逸+autoType注解绕过</span>
-            </div>
-          </div>
-        </div>
-      </aside>
-    </div>
-  </main>
-
-  <footer>
-      <div style="text-align:center;margin-bottom:16px;">
-          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
-          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
-          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
-          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
-          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
-        </div>
-    <div class="footer-content">
-      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
-      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
-      <div class="links">
-        <a href="https://github.com/deft-dream" target="_blank">GitHub</a>
-        <span>·</span>
-        <a href="mailto:s815887892@163.com">Contact</a>
-      </div>
-    </div>
-  </footer>
-</div>
-
-<script>
-// 数字滚动动画
-function animateCounters() {
-  document.querySelectorAll('.val[data-count]').forEach(el => {
-    const target = parseInt(el.dataset.count);
-    const duration = 2000;
-    const start = Date.now();
-    const timer = setInterval(() => {
-      const progress = Math.min((Date.now() - start) / duration, 1);
-      el.textContent = Math.floor(progress * target);
-      if (progress >= 1) clearInterval(timer);
-    }, 16);
-  });
-}
-
-// 触发动画
-const observer = new IntersectionObserver(entries => {
-  entries.forEach(entry => {
-    if (entry.isIntersecting) {
-      animateCounters();
-      observer.disconnect();
-    }
-  });
-});
-observer.observe(document.querySelector('.hero-stats'));
-</script>
-</body>
-</html>

