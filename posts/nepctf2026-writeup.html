@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NepCTF2026 部分WP — DARKSEC</title>
+<meta name="description" content="NepCTF2026比赛部分题目的Writeup">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;vertical-align:middle;margin-left:4px;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ CTF比赛 / Writeup</div>
+        <h1>NepCTF2026 部分WP</h1>
+        <div class="article-meta">
+          <span>📅 2026-07-17</span>
+          <span>⏱ 15 min read</span>
+          <span>🏷 CTF / MISC / CRYPTO</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#overview">比赛概述</a></li>
+            <li><a href="#catflag">MISC - CatFlag</a></li>
+            <li><a href="#unicode">MISC - 如烟大帝独断万古</a></li>
+            <li><a href="#flash">MISC - 谁引闪了我的灯</a></li>
+            <li><a href="#blind-rag">CRYPTO - Blind RAG</a></li>
+            <li><a href="#lgc">CRYPTO - LGC Attack</a></li>
+          </ul>
+        </div>
+
+        <h2 id="overview">比赛概述</h2>
+        <p>NepCTF2026是一场综合性CTF比赛，涵盖MISC、CRYPTO、WEB等多个方向。本文记录部分题目的解题思路。</p>
+
+        <blockquote>
+          <p>比赛链接：https://xz.aliyun.com/news/92568</p>
+        </blockquote>
+
+        <h2 id="catflag">MISC - CatFlag</h2>
+        <p>签到题，直接读取flag文件即可。</p>
+
+        <pre><code>type flag.txt</code></pre>
+
+        <p>最简单的签到题，考验基本的命令行操作。</p>
+
+        <h2 id="unicode">MISC - 如烟大帝独断万古</h2>
+        <p>这道题考察Unicode变体选择符隐写技术。</p>
+
+        <h3>Step 1: 观察异常 Unicode 字符</h3>
+        <p>解压后查看 <code>novel.txt</code>，正文没有直接出现flag。但检查字节可以看到大量形如 <code>EF B8 xx</code> 的序列，对应Unicode变体选择符 <code>U+FE00</code> 到 <code>U+FE0F</code>。</p>
+
+        <p>这些字符通常不可见或弱可见，刚好对应题面"名讳也是尔等能直呼的？"的暗示：真正的信息没有直接显示在正文中。</p>
+
+        <h3>Step 2: 提取 Variation Selectors 并解码</h3>
+        <p>将每个变体选择符按如下方式映射为十六进制数字：</p>
+        <pre><code>U+FE00 -> 0
+U+FE01 -> 1
+...
+U+FE0F -> f</code></pre>
+
+        <p>完整解题脚本：</p>
+        <pre><code>with open('novel.txt', 'rb') as f:
+    data = f.read()
+
+# 提取变体选择符
+selectors = []
+for byte in data:
+    if 0xFE00 <= byte <= 0xFE0F:
+        selectors.append(byte - 0xFE00)
+
+# 转换为十六进制字符串
+hex_str = ''.join(format(s, 'x') for s in selectors)
+
+# 转换为ASCII
+flag = bytes.fromhex(hex_str).decode()
+print(f"Flag: {flag}")</code></pre>
+
+        <h3>知识点</h3>
+        <ul>
+          <li>Unicode变体选择符（Variation Selectors）</li>
+          <li>隐写术 - 文本隐写</li>
+          <li>字节级数据分析</li>
+        </ul>
+
+        <h2 id="flash">MISC - 谁引闪了我的灯</h2>
+        <p>这道题考察ESP32固件逆向和无线协议分析。</p>
+
+        <h3>Step 1: 提取图片线索</h3>
+        <p>压缩包里有两个文件，JPEG的COM marker中有注释，给出频道和设备ID信息。</p>
+
+        <h3>Step 2: 逆向固件发包格式</h3>
+        <p>固件是ESP32-S3 Arduino merged flash。分区表显示app位于 <code>0x10000</code>。</p>
+
+        <p>用Xtensa反汇编跟到trigger逻辑，可还原出16字节payload的格式：</p>
+        <ul>
+          <li>默认 <code>group = 1</code></li>
+          <li>图片给出 <code>id = 19 = 0x13</code></li>
+          <li><code>01 01</code> 是trigger引闪命令字段</li>
+          <li>最后一字节是前15字节求和取低8位</li>
+        </ul>
+
+        <h3>Step 3: 计算 flag</h3>
+        <p>根据逆向出的协议格式，构造正确的payload即可获取flag。</p>
+
+        <h3>知识点</h3>
+        <ul>
+          <li>ESP32固件逆向</li>
+          <li>Xtensa汇编</li>
+          <li>无线协议分析</li>
+          <li>JPEG文件格式</li>
+        </ul>
+
+        <h2 id="blind-rag">CRYPTO - Blind RAG</h2>
+        <p>考察线性代数和加密算法分析。</p>
+
+        <h3>Step 1: 观察查询 oracle 的线性泄露</h3>
+        <p>通过分析oracle的响应模式，发现存在线性关系可以利用。</p>
+
+        <h3>Step 2: 恢复向量并解密文档</h3>
+        <p>利用线性泄露恢复密钥向量，然后解密目标文档获取flag。</p>
+
+        <h3>知识点</h3>
+        <ul>
+          <li>线性代数</li>
+          <li>Oracle攻击</li>
+          <li>向量恢复</li>
+        </ul>
+
+        <h2 id="lgc">CRYPTO - LGC Attack</h2>
+        <p>考察线性同余生成器（Linear Congruential Generator）的攻击。</p>
+
+        <h3>攻击原理</h3>
+        <p>LCG的递推公式为：<code>S_{n+1} = (a * S_n + c) mod m</code></p>
+
+        <p>如果能获取足够多的输出值，可以通过以下方法恢复参数：</p>
+        <ol>
+          <li>利用连续输出的差值</li>
+          <li>计算模数m</li>
+          <li>求解乘数a和增量c</li>
+        </ol>
+
+        <h3>知识点</h3>
+        <ul>
+          <li>线性同余生成器</li>
+          <li>格基规约（Lattice Reduction）</li>
+          <li>密码分析</li>
+        </ul>
+
+        <div style="text-align:center;padding:40px 0 20px;font-size:0.9rem;color:#c0c0d0;font-style:italic;">
+          ~ 比赛结束，学习不停 nya~ <img src="/assets/images/cat-final.png" alt="cat" style="width:1em;height:1em;vertical-align:middle;">
+        </div>
+
+        <div class="article-tags">
+          <span class="tag pink">CTF</span>
+          <span class="tag">MISC</span>
+          <span class="tag purple">CRYPTO</span>
+          <span class="tag yellow">Writeup</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div style="text-align:center;margin-bottom:16px;">
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+    </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
