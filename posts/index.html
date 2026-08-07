@@ -43,9 +43,9 @@
 
         <!-- 2026 -->
         <div class="section-label">2026</div>
-        <a href="/posts/sandbox-boundary-quartet.html" class="post-card" data-tags="inject">
+        <a href="/posts/sandbox-boundary-quartet.html" class="post-card" data-tags="sandbox unicode cve">
           <div class="post-top">
-            <span class="post-meta">08.06 // 22 min</span>
+            <span class="post-meta">2026.08.06 // 22 min read</span>
             <span class="post-diff hard">HARD</span>
           </div>
           <h3>沙箱与边界四重突破：Unicode同形字、DevTools RPC、硬件签名截断、OAuth刷新绕过 🐱💥</h3>
@@ -57,12 +57,13 @@
             <span class="tag yellow">CVE</span>
           </div>
         </a>
-        <a href="/posts/implicit-trust-quartet.html" class="post-card" data-tags="inject">
+
+        <a href="/posts/implicit-trust-quartet.html" class="post-card" data-tags="git oauth k8s cve">
           <div class="post-top">
-            <span class="post-meta">08.05 // 20 min</span>
+            <span class="post-meta">2026.08.05 // 20 min read</span>
             <span class="post-diff hard">HARD</span>
           </div>
-          <h3>隐式信任四重崩塌：Git钩子注入、OAuth2 Scope越权、K8s Confused Deputy、Python反序列化 🐱💥</h3>
+          <h3>沙箱与边界四重突破：Git钩子注入、OAuth2 Scope越权、K8s Confused Deputy、Python反序列化 🐱💥</h3>
           <p>Gitea Git hook注入RCE(CVSS 9.8)、OpenEMR OAuth2动态客户端注册FHIR scope提升、Kubernetes ClusterCurator命名空间→集群admin提权、kotaemon __type__反序列化RCE。</p>
           <div class="tags">
             <span class="tag pink">Git安全</span>
@@ -71,9 +72,10 @@
             <span class="tag yellow">CVE</span>
           </div>
         </a>
-        <a href="/posts/config-arch-trust-triple.html" class="post-card" data-tags="inject">
+
+        <a href="/posts/config-arch-trust-triple.html" class="post-card" data-tags="iot supply-chain cve">
           <div class="post-top">
-            <span class="post-meta">08.04 // 18 min</span>
+            <span class="post-meta">2026.08.04 // 18 min read</span>
             <span class="post-diff hard">HARD</span>
           </div>
           <h3>配置与架构信任链三重奏：CGI插件枚举、白名单绕过、OpenSSL配置劫持 🐱💥</h3>
@@ -84,6 +86,33 @@
             <span class="tag purple">CVE</span>
             <span class="tag yellow">DLL劫持</span>
           </div>
+        </a>
+
+        <a href="/posts/nepctf2026-writeup.html" class="post-card" data-tags="ctf misc crypto">
+          <div class="post-top">
+            <span class="post-meta">2026.07.17 // 15 min read</span>
+            <span class="post-diff medium">MEDIUM</span>
+          </div>
+          <h3>NepCTF2026 部分WP</h3>
+          <p>NepCTF2026比赛部分题目的Writeup，包含MISC和CRYPTO方向。</p>
+        </a>
+
+        <a href="/posts/prototype-pollution-rce.html" class="post-card" data-tags="prototype pollution nodejs rce">
+          <div class="post-top">
+            <span class="post-meta">2026.07.17 // 10 min read</span>
+            <span class="post-diff hard">HARD</span>
+          </div>
+          <h3>Node.js原型链污染到RCE：从污染到拿Shell</h3>
+          <p>通过原型链污染+模板注入实现远程代码执行。</p>
+        </a>
+
+        <a href="/posts/lfi-session-upload-progress.html" class="post-card" data-tags="lfi race-condition php rce">
+          <div class="post-top">
+            <span class="post-meta">2026.07.17 // 12 min read</span>
+            <span class="post-diff hard">HARD</span>
+          </div>
+          <h3>LFI + Session Upload Progress：条件竞争RCE实战</h3>
+          <p>LFI漏洞利用与PHP_SESSION_UPLOAD_PROGRESS条件竞争攻击，成功拿到flag！</p>
         </a>
 
         <a href="/posts/protocol-kernel-deser-triple.html" class="post-card" data-tags="auth inject">
@@ -512,3 +541,8 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
         card.style.display = 'none';
       }
     });
+  });
+});
+</script>
+</body>
+</html>

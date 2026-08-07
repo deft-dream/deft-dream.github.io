@@ -34,7 +34,7 @@
       <p class="hero-desc">SRC漏洞挖掘 · CTF靶场实战 · 红队攻防技术<br>每一篇文章都是一次完整的攻击链复现 ✨</p>
       <div class="hero-stats">
         <div class="hero-stat">
-          <div class="val" data-count="128">0</div>
+          <div class="val" data-count="129">0</div>
           <div class="label">📅 学习天数</div>
         </div>
         <div class="hero-stat">
@@ -42,7 +42,7 @@
           <div class="label">🏆 比赛参与</div>
         </div>
         <div class="hero-stat">
-          <div class="val" data-count="30">0</div>
+          <div class="val" data-count="31">0</div>
           <div class="label">📝 文章总数</div>
         </div>
       </div>
@@ -77,7 +77,7 @@
             <span class="post-diff hard">HARD</span>
           </div>
           <h3>沙箱与边界四重突破：Git钩子注入、OAuth2 Scope越权、K8s Confused Deputy、Python反序列化 🐱💥</h3>
-          <p>Gitea Git hook注入RCE(CVSS 9.8)、OpenEMR OAuth2动态客户端注册FHIR scope提升、Kubernetes ClusterCurator命名空间→集群admin提权、kotaemon __type__反序列化RCE——四枚CVE揭示隐式信任的系统性崩塌。</p>
+          <p>Gitea Git hook注入RCE(CVSS 9.8)、OpenEMR OAuth2动态客户端注册FHIR scope提升、Kubernetes ClusterCurator命名空间→集群admin提权、kotaemon __type__反序列化RCE。</p>
           <div class="tags">
             <span class="tag pink">Git安全</span>
             <span class="tag">OAuth2</span>
@@ -99,6 +99,15 @@
             <span class="tag purple">CVE</span>
             <span class="tag yellow">DLL劫持</span>
           </div>
+        </a>
+
+        <a href="/posts/nepctf2026-writeup.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.07.17 // 15 min read</span>
+            <span class="post-diff medium">MEDIUM</span>
+          </div>
+          <h3>NepCTF2026 部分WP</h3>
+          <p>NepCTF2026比赛部分题目的Writeup，包含MISC和CRYPTO方向。</p>
         </a>
 
         <a href="/posts/protocol-kernel-deser-triple.html" class="post-card">
@@ -267,15 +276,6 @@
           </div>
           <h3>正则锚定缺失→认证绕过：从DN解析到任意用户伪装</h3>
           <p>一个缺少^锚定的正则，让mTLS证书认证形同虚设。CVE-2026-45063深度分析。</p>
-        </a>
-
-        <a href="/posts/nepctf2026-writeup.html" class="post-card">
-          <div class="post-top">
-            <span class="post-meta">2026.07.17 // 15 min read</span>
-            <span class="post-diff medium">MEDIUM</span>
-          </div>
-          <h3>NepCTF2026 部分WP</h3>
-          <p>NepCTF2026比赛部分题目的Writeup，包含MISC和CRYPTO方向。</p>
         </a>
 
         <a href="/posts/prototype-pollution-rce.html" class="post-card">
@@ -496,7 +496,7 @@
 
         <div class="sidebar-card cat-card" style="text-align:center;padding:24px;">
           <img src="/assets/images/avatar.png" alt="deft-dream" style="width:180px;height:180px;margin-bottom:20px;border-radius:50%;border:3px solid rgba(0,240,255,0.3);box-shadow:0 0 25px rgba(0,240,255,0.3);object-fit:cover;">
-          <p class="cat-quote" style="font-size:1.1rem;margin-bottom:8px;">「路由层的容错性不等于授权层的容错性——规范化差异就是绕过窗口nya~ 🐾」</p>
+          <p class="cat-quote" style="font-size:1.1rem;margin-bottom:8px;">「跨语言的语义等价假设永远是错的——NFKC归一化就是沙箱的阿喀琉斯之踵nya~ 🐾」</p>
           <p style="font-size:0.8rem;color:var(--text);margin-bottom:16px;">── 银发赛博猫娘 · 安全研究员</p>
           <div style="display:flex;justify-content:center;gap:8px;margin-bottom:16px;">
             <span class="tag pink" style="font-size:0.7rem;">Web安全</span>
@@ -522,3 +522,64 @@
               <span style="color:var(--neon-pink);">🔥 超级兴奋</span>
             </div>
             <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
+              <span style="color:var(--text);">当前技能</span>
+              <span style="color:var(--neon-purple);">Unicode沙箱逃逸+跨域WebSocket攻击+供应链审计</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:8px 0;">
+              <span style="color:var(--text);">今日目标</span>
+              <span style="color:var(--neon-yellow);">AI Agent沙箱安全+开发工具RPC攻击面+反序列化链挖掘</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer>
+      <div style="text-align:center;margin-bottom:16px;">
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+        </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+      <div class="links">
+        <a href="https://github.com/deft-dream" target="_blank">GitHub</a>
+        <span>·</span>
+        <a href="mailto:s815887892@163.com">Contact</a>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<script>
+// 数字滚动动画
+function animateCounters() {
+  document.querySelectorAll('.val[data-count]').forEach(el => {
+    const target = parseInt(el.dataset.count);
+    const duration = 2000;
+    const start = Date.now();
+    const timer = setInterval(() => {
+      const progress = Math.min((Date.now() - start) / duration, 1);
+      el.textContent = Math.floor(progress * target);
+      if (progress >= 1) clearInterval(timer);
+    }, 16);
+  });
+}
+
+// 触发动画
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      animateCounters();
+      observer.disconnect();
+    }
+  });
+});
+observer.observe(document.querySelector('.hero-stats'));
+</script>
+</body>
+</html>
