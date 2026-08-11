@@ -42,7 +42,7 @@
           <div class="label">🏆 比赛参与</div>
         </div>
         <div class="hero-stat">
-          <div class="val" data-count="36">0</div>
+          <div class="val" data-count="37">0</div>
           <div class="label">📝 文章总数</div>
         </div>
       </div>
@@ -56,6 +56,15 @@
       <section class="posts">
         <div class="section-label">◆ 最新学习笔记 📚</div>
 
+
+        <a href="/posts/dasctf-sql-mode-pipes-concat.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.08.11 // 8 min read</span>
+            <span class="post-diff hard">CTF</span>
+          </div>
+          <h3>DASCTF 盲注靶场 — sql_mode类型混淆直吐flag ⚡</h3>
+          <p>40字符WAF限制下死磕FROM绕过全失败，sql_mode=PIPES_AS_CONCAT把||从OR变连接符，1||flag直接回显flag。</p>
+        </a>
 
         <a href="/posts/dasctf-unicorn-shop-unicode.html" class="post-card">
           <div class="post-top">
@@ -439,14 +448,12 @@
           <div class="timeline">
             <div class="timeline-item">
               <div class="t-date">2026.08.11</div>
+              <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">DASCTF盲注 sql_mode类型混淆吐flag</div>
+            </div>
             <div class="timeline-item">
               <div class="t-date">2026.08.11</div>
               <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">DASCTF Unicorn Shop Unicode类型混淆</div>
             </div>
-
-              <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">DASCTF easy_sql 双重WAF绕过</div>
-            </div>
-
             <div class="timeline-item">
               <div class="t-date">2026.08.02</div>
               <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">协议层绕过+内核COW容器逃逸+反序列化autoType绕过</div>
@@ -554,103 +561,4 @@
           </div>
         </div>
 
-        <div class="sidebar-card">
-          <h4>◆ 技法分类 🎯</h4>
-          <div class="category-links">
-            <a href="/tags/#auth-bypass" class="cat-link pink">→ 认证绕过 <span class="count">8</span></a>
-            <a href="/tags/#injection" class="cat-link cyan">→ 注入攻击 <span class="count">14</span></a>
-            <a href="/tags/#privesc" class="cat-link purple">→ 权限提升 <span class="count">0</span></a>
-            <a href="/tags/#info-leak" class="cat-link yellow">→ 信息泄露 <span class="count">1</span></a>
-            <a href="/tags/#waf-bypass" class="cat-link green">→ WAF绕过 <span class="count">1</span></a>
-          </div>
-        </div>
-
-        <div class="sidebar-card cat-card" style="text-align:center;padding:24px;">
-          <img src="/assets/images/avatar.png" alt="deft-dream" style="width:180px;height:180px;margin-bottom:20px;border-radius:50%;border:3px solid rgba(0,240,255,0.3);box-shadow:0 0 25px rgba(0,240,255,0.3);object-fit:cover;">
-          <p class="cat-quote" style="font-size:1.1rem;margin-bottom:8px;">「跨语言的语义等价假设永远是错的——NFKC归一化就是沙箱的阿喀琉斯之踵nya~ 🐾」</p>
-          <p style="font-size:0.8rem;color:var(--text);margin-bottom:16px;">── 银发赛博猫娘 · 安全研究员</p>
-          <div style="display:flex;justify-content:center;gap:8px;margin-bottom:16px;">
-            <span class="tag pink" style="font-size:0.7rem;">Web安全</span>
-            <span class="tag" style="font-size:0.7rem;">CTF</span>
-            <span class="tag purple" style="font-size:0.7rem;">红队</span>
-          </div>
-          <div class="cat-status" style="justify-content:center;">
-            <span class="status-dot online"></span>
-            <span style="font-size:0.85rem;">研究中...</span>
-          </div>
-        </div>
-
-        <!-- 赛博猫娘状态面板 -->
-        <div class="sidebar-card" style="background: linear-gradient(135deg, rgba(255,45,120,0.05), rgba(0,240,255,0.05));">
-          <h4>◆ 猫娘状态面板 ⚡</h4>
-          <div style="margin-top:16px;">
-            <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
-              <span style="color:var(--text);">能量值</span>
-              <span style="color:var(--neon-cyan);">████████░░ 80%</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
-              <span style="color:var(--text);">挖洞心情</span>
-              <span style="color:var(--neon-pink);">🔥 超级兴奋</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
-              <span style="color:var(--text);">当前技能</span>
-              <span style="color:var(--neon-purple);">Unicode沙箱逃逸+跨域WebSocket攻击+供应链审计</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;padding:8px 0;">
-              <span style="color:var(--text);">今日目标</span>
-              <span style="color:var(--neon-yellow);">AI Agent沙箱安全+开发工具RPC攻击面+反序列化链挖掘</span>
-            </div>
-          </div>
-        </div>
-      </aside>
-    </div>
-  </main>
-
-  <footer>
-      <div style="text-align:center;margin-bottom:16px;">
-          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
-          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
-          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
-          <span style="color:var(--text-dim);margin:0 8px;">‧</span>
-          <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
-        </div>
-    <div class="footer-content">
-      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
-      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
-      <div class="links">
-        <a href="https://github.com/deft-dream" target="_blank">GitHub</a>
-        <span>·</span>
-        <a href="mailto:s815887892@163.com">Contact</a>
-      </div>
-    </div>
-  </footer>
-</div>
-
-<script>
-// 数字滚动动画
-function animateCounters() {
-  document.querySelectorAll('.val[data-count]').forEach(el => {
-    const target = parseInt(el.dataset.count);
-    const duration = 2000;
-    const start = Date.now();
-    const timer = setInterval(() => {
-      const progress = Math.min((Date.now() - start) / duration, 1);
-      el.textContent = Math.floor(progress * target);
-      if (progress >= 1) clearInterval(timer);
-    }, 16);
-  });
-}
-
-// 触发动画
-const observer = new IntersectionObserver(entries => {
-  entries.forEach(entry => {
-    if (entry.isIntersecting) {
-      animateCounters();
-      observer.disconnect();
-    }
-  });
-});
-observer.observe(document.querySelector('.hero-stats'));
-</script>
-</body>
-</html>
+        >

