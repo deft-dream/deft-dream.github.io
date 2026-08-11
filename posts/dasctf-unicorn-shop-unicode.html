@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DASCTF Unicorn Shop Writeup — Unicode数值类型混淆 — DARKSEC</title>
+<meta name="description" content="DASCTF Unicorn Shop靶场实战：Unicode数值类型混淆攻击，利用unicodedata.numeric()单字符绕过价格校验。">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+<link rel="shortcut icon" href="/assets/images/cat-final.png">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;vertical-align:middle;margin-left:4px;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ CTF / DASCTF / 逻辑漏洞</div>
+        <h1>DASCTF Unicorn Shop — Unicode数值类型混淆 🦄</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-11</span>
+          <span>⏱ 5 min read</span>
+          <span>🏷 Unicode / 类型混淆 / CTF</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#overview">题目概览</a></li>
+            <li><a href="#analysis">分析：单字符价格约束</a></li>
+            <li><a href="#exploit">Unicode数值混淆攻击</a></li>
+            <li><a href="#summary">总结</a></li>
+          </ul>
+        </div>
+
+        <h2 id="overview">🎯 题目概览</h2>
+        <p>DASCTF 的 <code>Unicorn shop</code> 靶场，Python 2.7 + Tornado 框架。一个独角兽商店，目标是买到最贵的商品（item 4，价格 1337.0）。</p>
+        <pre><code>Item ID | Price  | English
+   1    |  2.0   | black and white unicorn
+   2    |  5.0   | unicorn family
+   3    |  8.0   | warrior unicorn
+   4    | 1337.0 | ultra unicorn</code></pre>
+        <p>购买接口 <code>POST /charge</code>，参数 <code>id</code> 和 <code>price</code>。</p>
+        <p>HTML注释提示：</p>
+        <pre><code>&lt;!--Ah,really important,seriously. --&gt;
+&lt;!--We still have some surprise for admin.password--&gt;</code></pre>
+
+        <h2 id="analysis">🔍 分析：单字符价格约束</h2>
+        <h3>错误信息泄露机制</h3>
+        <p>尝试不同的 price 值，观察错误信息：</p>
+        <pre><code># 多字符价格 → 被拦截
+price=1.0  → "Only one char(?) allowed!"
+price=1337 → "Only one char(?) allowed!"
+
+# 单字符但价格不足 → 余额不够
+price=1    → "You don't have enough money!"
+price=2    → "You don't have enough money!"</code></pre>
+        <p>关键约束：<strong>price 字段必须恰好是 1 个字符</strong>，且该字符的数值必须 ≥ 商品价格。</p>
+        <p>问题来了：普通 ASCII 字符中，最大的数字字符是 <code>9</code>，数值为 9，远远不够 1337。必须另辟蹊径。</p>
+
+        <h2 id="exploit">🔧 Unicode数值混淆攻击</h2>
+        <h3>原理</h3>
+        <p>Python 2 的 <code>unicodedata.numeric()</code> 函数可以将 Unicode 字符转换为对应的数值。许多 Unicode 字符拥有远超 9 的数值：</p>
+        <table>
+          <tr><th>字符</th><th>Unicode</th><th>名称</th><th>数值</th></tr>
+          <tr><td><code>²</code></td><td>U+00B2</td><td>上标二</td><td>2</td></tr>
+          <tr><td><code>½</code></td><td>U+00BD</td><td>二分之一</td><td>0.5</td></tr>
+          <tr><td><code>Ⅷ</code></td><td>U+2167</td><td>罗马数字八</td><td>8</td></tr>
+          <tr><td><code>Ⅿ</code></td><td>U+216F</td><td>罗马数字一千</td><td>1000</td></tr>
+          <tr><td><code>ↁ</code></td><td>U+2181</td><td>罗马数字五千</td><td>5000</td></tr>
+          <tr><td><code>ↂ</code></td><td>U+2182</td><td>罗马数字一万</td><td>10000</td></tr>
+        </table>
+        <p><code>ↂ</code>（U+2182）虽然在视觉上只是"一个字符"，但其数值为 <strong>10000</strong>，远超 1337。</p>
+
+        <h3>Payload</h3>
+        <pre><code>POST /charge
+id=4&amp;price=ↂ</code></pre>
+        <p>服务端处理流程：</p>
+        <ol>
+          <li>检查 price 字符串长度 → <code>len("ↂ") == 1</code> ✅</li>
+          <li>调用 <code>unicodedata.numeric("ↂ")</code> → 返回 <code>10000.0</code></li>
+          <li>比较价格 → <code>10000.0 &gt;= 1337.0</code> ✅</li>
+          <li>购买成功 → 返回 flag</li>
+        </ol>
+
+        <h3>结果</h3>
+        <pre><code>操作成功。
+CTF2{23c62081-a798-46a7-9161-de4f10ac1d4f}</code></pre>
+
+        <div style="background:linear-gradient(135deg,rgba(0,240,255,0.05),rgba(255,45,120,0.05));border:1px solid rgba(0,240,255,0.2);border-radius:8px;padding:20px;margin:24px 0;text-align:center;">
+          <p style="font-size:0.85rem;color:var(--text);margin-bottom:8px;">// FLAG //</p>
+          <code style="font-size:1.2rem;color:var(--neon-cyan);letter-spacing:2px;">CTF2{23c62081-a798-46a7-9161-de4f10ac1d4f}</code>
+        </div>
+
+        <h2 id="summary">📊 总结</h2>
+        <h3>漏洞本质</h3>
+        <p>服务端使用 <code>unicodedata.numeric()</code> 将用户输入的单个字符转换为数值，但没有对数值范围做上限校验。攻击者利用 Unicode 罗马数字字符（如 <code>ↂ</code> = 10000），在满足"单字符"约束的同时传入任意大的数值。</p>
+
+        <h3>防御方案</h3>
+        <pre><code># 正确做法：限制字符必须是 ASCII 数字
+if not price.isdigit():
+    raise ValueError("Invalid price")
+
+# 或者限制数值范围
+value = unicodedata.numeric(price)
+if value > MAX_PRICE:
+    raise ValueError("Price too high")</code></pre>
+
+        <blockquote>
+          <p>💡 类型混淆漏洞的核心：开发者认为"一个字符"等价于"一个小数字"，但 Unicode 标准打破了这个假设。在处理用户输入时，永远不要对字符的"语义"做隐含假设。</p>
+        </blockquote>
+
+        <div class="article-tags">
+          <span class="tag pink">Unicode</span>
+          <span class="tag">类型混淆</span>
+          <span class="tag purple">CTF</span>
+          <span class="tag yellow">DASCTF</span>
+          <span class="tag cyan">Python2</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div style="text-align:center;margin-bottom:16px;">
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+    </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+      <div class="links">
+        <a href="https://github.com/deft-dream" target="_blank">GitHub</a>
+        <span>·</span>
+        <a href="mailto:s815887892@163.com">Contact</a>
+      </div>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
