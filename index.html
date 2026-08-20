@@ -34,7 +34,7 @@
       <p class="hero-desc">SRC漏洞挖掘 · CTF靶场实战 · 红队攻防技术<br>每一篇文章都是一次完整的攻击链复现 ✨</p>
       <div class="hero-stats">
         <div class="hero-stat">
-          <div class="val" data-count="140">0</div>
+          <div class="val" data-count="141">0</div>
           <div class="label">📅 学习天数</div>
         </div>
         <div class="hero-stat">
@@ -42,7 +42,7 @@
           <div class="label">🏆 比赛参与</div>
         </div>
         <div class="hero-stat">
-          <div class="val" data-count="42">0</div>
+          <div class="val" data-count="43">0</div>
           <div class="label">📝 文章总数</div>
         </div>
       </div>
@@ -55,6 +55,15 @@
       <!-- Main Content -->
       <section class="posts">
         <div class="section-label">◆ 最新学习笔记 📚</div>
+
+        <a href="/posts/fs-case-bulk-auth-cors-presign.html" class="post-card">
+          <div class="post-top">
+            <span class="post-meta">2026.08.20 // 14 min read</span>
+            <span class="post-diff hard">研究</span>
+          </div>
+          <h3>大小写折叠、批量越权、CORS≠防护：三重授权语义崩塌 🐱</h3>
+          <p>CVE-2026-62673 大小写不敏感FS绕过htaccess + CVE-2026-11986 Keycloak批量端点越权删除 + CVE-2026-63123/59992 TinaCMS CORS+presigned URL全桶读写——三种语义分裂揭示安全规则与执行层的一致性盲区。</p>
+        </a>
 
         <a href="/posts/db-kernel-sandbox-escape-cluster.html" class="post-card">
           <div class="post-top">
@@ -481,6 +490,10 @@
         <div class="sidebar-card">
           <h4>◆ 学习时间线 📖</h4>
           <div class="timeline">
+            <div class="timeline-item">
+              <div class="t-date">2026.08.20</div>
+              <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">大小写折叠+批量越权+CORS≠防护：三重授权语义崩塌</div>
+            </div>
             <div class="timeline-item">
               <div class="t-date">2026.08.17</div>
               <div class="t-title"><img src="/assets/images/cat-final.png" alt="cat" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;">密码学Fail-Open降级+SQLi会话表注入：当出错路径比正常路径更危险</div>

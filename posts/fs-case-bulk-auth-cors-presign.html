@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>大小写折叠、批量越权、CORS≠防护：三重授权语义崩塌 — DARKSEC</title>
+<meta name="description" content="CVE-2026-62673大小写不敏感FS绕过htaccess + CVE-2026-11986 Keycloak批量端点越权删除 + CVE-2026-63123/59992 TinaCMS CORS+presigned URL全桶读写">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 漏洞研究 / 授权语义崩塌</div>
+        <h1>大小写折叠、批量越权、CORS≠防护：三重授权语义崩塌 🐱</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-20</span>
+          <span>⏱ 14 min read</span>
+          <span>🏷 大小写绕过 / 批量越权 / CORS / Presigned URL</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#intro">引言：语义分裂的三副面孔</a></li>
+            <li><a href="#case">大小写折叠绕过 — 文件系统是隐式归一化器</a></li>
+            <li><a href="#bulk">批量端点越权 — 动作授权≠对象授权</a></li>
+            <li><a href="#cors">CORS false ≠ 请求拒绝 — presigned URL 全桶读写</a></li>
+            <li><a href="#methodology">共性方法论：语义分裂枚举法</a></li>
+            <li><a href="#practice">实战清单</a></li>
+          </ul>
+        </div>
+
+        <h2 id="intro">引言：语义分裂的三副面孔 ⚡</h2>
+        <p>今天三个漏洞看似完全不同——一个是 Apache <code>.htaccess</code>，一个是 Keycloak 管理后台，一个是 TinaCMS + S3。但它们共享同一个根因：<strong>安全规则看到的「字符串」≠ 底层执行层看到的「字符串」</strong>。</p>
+        <blockquote>
+          <p>🔒 安全的本质是「一致性」——规则和执行必须看到同一个世界。当两者之间出现归一化、分组、或语义差异，攻击者就找到了裂缝。</p>
+        </blockquote>
+        <p>大小写折叠让规则「看不见」大写扩展名，批量端点让权限「看不见」集合中的单个对象，CORS 的 <code>return false</code> 让浏览器「拒绝读取」但服务端「照常执行」。三种不同的语义分裂，同一种攻击直觉。</p>
+
+        <h2 id="case">🔐 大小写折叠绕过 — 文件系统是隐式归一化器</h2>
+
+        <h3>漏洞概述</h3>
+        <p>CVE-2026-62673（Grav CMS）：<code>.htaccess</code> 用 <code>RewriteRule ^(user)/(.*)\.(php|yaml|yml|json|twig|sh|...)$ error [F]</code> 拦截对 <code>user/</code> 目录下敏感文件的直接 HTTP 访问——但规则<strong>缺 <code>[NC]</code>（No Case）标志</strong>，扩展名匹配是大小写敏感的。</p>
+
+        <h3>攻击原理</h3>
+        <pre><code># 规则：大小写敏感（缺 [NC]）
+RewriteRule ^(user)/(.*)\.(php|yaml|yml|json|twig|sh)$ [F]
+
+# 文件系统：大小写不敏感（macOS / Windows / NTFS Docker volume）
+#   shell.php  === shell.PHP  === shell.Php  → 同一个文件
+
+# 攻击者请求：
+GET /user/config/system.yaml   → 规则命中 ✓ → 拒绝
+GET /user/config/system.YAML   → 规则不命中 ✗ → 文件系统命中 ✓ → 泄露！
+
+# 核心 differential：
+#   规则层看到的是 "yaml" ≠ "YAML"  → 不拦截
+#   文件系统看到的是 "YAML" == "yaml"  → 返回同一个文件</code></pre>
+
+        <h3>为什么大小写不敏感文件系统是隐式归一化器</h3>
+        <p>这个漏洞与已入库的「Unicode 归一化差异」「零宽字符」「同形字」同族——差异维度是<strong>大小写</strong>。大小写不敏感文件系统把 <code>PHP</code>/<code>php</code>/<code>Php</code> 折叠成同一文件，而任何「先精确匹配字符串再做安全决策」的规则都没意识到这个折叠。</p>
+
+        <p><strong>反向成立</strong>：在 Linux（大小写敏感）上，攻击者可同时落盘 <code>shell.php</code> 与 <code>shell.PHP</code>——若规则只拦其中一种形态，另一种漏过。</p>
+
+        <h3>审计方法</h3>
+        <pre><code># 1. 检查扩展名拦截规则是否带 [NC]
+grep -rn "RewriteRule\|location\|<Files" .htaccess /etc/nginx/
+# 没有 [NC] / ~* = 大小写敏感 = 潜在绕过
+
+# 2. 确认文件系统是否大小写不敏感
+# macOS/HFS+/APFS、Windows/NTFS、Win→Mac 挂载的 Docker volume
+mount | grep -i "ntfs\|fuse\|hfs\|apfs"
+
+# 3. 测试大写/混合扩展名
+curl https://target/user/config/system.YAML
+curl https://target/user/config/system.Php
+curl https://target/user/config/system.JSON</code></pre>
+
+        <h2 id="bulk">🔑 批量端点越权 — 动作授权 ≠ 对象授权</h2>
+
+        <h3>漏洞概述</h3>
+        <p>CVE-2026-11986（Keycloak admin-ui-ext）：批量删除角色映射端点只校验了「调用者是否有权执行批量删除这个<strong>动作</strong>」，<strong>没有对被操作的每个对象</strong>做逐项权限校验。委托管理员可以批量删除高权限用户的角色映射。</p>
+
+        <h3>攻击原理</h3>
+        <pre><code># 单条删除：校验动作 + 对象 ✓
+DELETE /admin/realms/myrealm/users/{userId}/role-mappings/{roleId}
+# 鉴权: can(delegated_admin, "delete-role-mapping", target_user, role)
+# → 委托管理员只能删自己管辖域内的 → 安全
+
+# 批量删除：只校验动作 ✗
+POST /admin/realms/myrealm/bulk/remove-role-mappings
+Body: { "userIds": [...], "roleIds": [...] }
+# 鉴权: can(delegated_admin, "delete-role-mapping")  ← 只查动作！
+# → 委托管理员可以批量删高权限用户的角色映射 → 越权！
+
+# 授权必须覆盖两个维度：
+# ✅ can(user, "action")                    → 动作授权
+# ❌ can(user, "action", target_object)     → 对象授权（缺失！）</code></pre>
+
+        <h3>深层洞察</h3>
+        <ul>
+          <li><strong>批量端点是「方法级授权不一致」的集合变体</strong>：单条操作查得严，批量路径把「对集合的授权」误当成「对每个元素的授权」</li>
+          <li><strong>委托管理模型的天然风险</strong>：delegated admin 本就是「部分权限」，批量端点最容易把「部分」放大成「全部」</li>
+          <li><strong>与「最小公共分母陷阱」互为镜像</strong>：不是「对所有对象取最小权限」，而是「批量动作绕过了对象的逐项检查」</li>
+        </ul>
+
+        <h3>审计方法</h3>
+        <pre><code># 枚举所有批量端点
+grep -rn "bulk\|batch\|mass\|removeAll\|deleteAll\|import" src/api/
+
+# 检查鉴权逻辑：是否对每个对象都做了权限校验？
+# 危险模式：鉴权函数只接收 action，不接收 target_list
+def authorize_bulk_delete(user, ids):
+    check_permission(user, "bulk-delete")  # ✅ 动作
+    # ❌ 缺: for id in ids: check_permission(user, "delete", id)
+    db.delete_all(ids)
+
+# 测试：低权限账号调用批量端点操作高权限对象</code></pre>
+
+        <h2 id="cors">🌐 CORS false ≠ 请求拒绝 — presigned URL 全桶读写</h2>
+
+        <h3>漏洞概述</h3>
+        <p>两个同源漏洞（Tina CMS）：</p>
+        <ul>
+          <li>CVE-2026-63123：Tina dev server 的 CORS 中间件对不允许的 origin 只 <code>callback(null, false)</code>——浏览器不把响应交给 JS 读，但<strong>服务端仍然完整处理了请求</strong>→跨源任意文件写入</li>
+          <li>CVE-2026-59992：<code>next-tinacms-s3</code> 接受 <code>?key=</code> 参数直接生成 presigned URL，<strong>不校验 key 是否在配置的 <code>mediaRoot</code> 下</strong>→任何登录编辑者可读/写/删整个 S3 桶</li>
+        </ul>
+
+        <h3>攻击链</h3>
+        <pre><code># 漏洞1: CORS return false ≠ 403
+# Tina dev server CORS 中间件：
+app.use(cors({
+    origin: function(origin, callback) {
+        if (allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            callback(null, false);  // ❌ 不是 403！只是不加 CORS 头
+        }
+    }
+}));
+
+# 攻击者网页：
+fetch('http://localhost:3000/media/upload/myfile.php', {
+    method: 'POST',
+    body: maliciousFormData
+});
+# 浏览器: 不加 CORS 头, 不把响应给 JS
+# 服务端: 照常处理 POST, 文件落盘 ✅ → 跨源任意文件写入！
+
+# 漏洞2: presigned URL key 未限定
+GET /api/s3/media/presigned-url?key=../../other-bucket/secret
+# → 返回 AWS 签名的 PutObject/DeleteObject URL
+# authorized() 只验「人」不验「范围」
+# 「签名」≠「授权」——签名保护完整性，不保护归属</code></pre>
+
+        <h3>核心洞察</h3>
+        <blockquote>
+          <p>🔑 CORS 的 <code>return false</code> 语义是「浏览器端隔离」而非「服务端拒绝」。跨源防护的正确实现是服务端直接 403 拒绝，而非只改响应头。</p>
+        </blockquote>
+        <ul>
+          <li><strong>authorized() 只验「人」不验「范围」</strong>：登录 ≠ 有权操作这个具体对象</li>
+          <li><strong>「签名」≠「授权」</strong>：presigned URL 证明请求由密钥持有方签发，但 Key 内容由攻击者参数决定时，签名保护的是完整性而非归属</li>
+        </ul>
+
+        <h2 id="methodology">🧠 共性方法论：语义分裂枚举法</h2>
+        <p>三个漏洞的根因都是「规则看到的 ≠ 执行层看到的」。这催生了一个通用审计方法论：</p>
+
+        <h3>语义分裂枚举清单</h3>
+        <pre><code>┌──────────────────┬─────────────────────┬──────────────────┬──────────┐
+│ 维度              │ 规则层               │ 执行层            │ 语义差异  │
+├──────────────────┼─────────────────────┼──────────────────┼──────────┤
+│ 大小写            │ 精确匹配 "php"       │ 大小写不敏感       │ 折叠      │
+│ Unicode 归一化    │ 字节比较              │ NFC/NFD 归一化    │ 折叠      │
+│ 批量 vs 单条      │ 动作级授权            │ 对象级预期         │ 粒度      │
+│ CORS             │ return false (浏览器) │ 服务端照样处理     │ 语义      │
+│ 签名 vs 授权      │ 密钥持有 = 合法       │ 对象归属 = 授权    │ 解耦      │
+└──────────────────┴─────────────────────┴──────────────────┴──────────┘
+
+# 审计三问：
+# 1. 规则/校验看到的字符串，和后端/执行层看到的，是否总是一致？
+# 2. 授权粒度是否覆盖了操作的目标对象（不仅是动作）？
+# 3. 安全机制（CORS/签名/认证）是否真的在拒绝处理，还是只在拒绝响应？</code></pre>
+
+        <h3>迁移目标</h3>
+        <ul>
+          <li><strong>大小写维度</strong>：所有扩展名黑名单/白名单、WAF 后缀匹配、nginx/Apache location、S3 key 后缀过滤</li>
+          <li><strong>批量维度</strong>：所有 IAM/管理后台的批量端点、batch REST API、管理后台「全选删除」</li>
+          <li><strong>CORS 维度</strong>：所有开发服务器 CORS 配置、presigned URL 生成端点、media/文件处理器</li>
+        </ul>
+
+        <h2 id="practice">🎯 实战建议</h2>
+
+        <h3>立即可做</h3>
+        <ol>
+          <li><strong>审计扩展名拦截规则</strong>：<code>grep -rn "RewriteRule" .htaccess</code> 确认是否带 <code>[NC]</code>；测试 <code>.PHP</code>/<code>.YAML</code> 大写扩展名</li>
+          <li><strong>枚举批量端点</strong>：找到所有 <code>/bulk</code>/<code>/batch</code> 端点，用低权限账号测试是否能操作高权限对象</li>
+          <li><strong>测试 CORS 拒绝路径</strong>：确认 <code>return false</code> 还是 <code>403</code>——构造跨源 POST 测试是否产生副作用</li>
+          <li><strong>审计 presigned URL</strong>：<code>?key=../../</code> 越界测试，确认是否有 base-path 约束</li>
+        </ol>
+
+        <h3>长期积累</h3>
+        <ul>
+          <li>建立「语义分裂」检查清单：每个安全边界都要问「规则看到的和执行层看到的一致吗」</li>
+          <li>建立「授权粒度」审计习惯：每个批量端点都要问「对每个对象都单独过了权限校验吗」</li>
+          <li>建立「安全机制语义」认知：CORS ≠ CSRF 防护，签名 ≠ 授权，认证 ≠ 授权</li>
+        </ul>
+
+        <div class="article-tags">
+          <span class="tag pink">大小写绕过</span>
+          <span class="tag cyan">批量越权</span>
+          <span class="tag green">CORS</span>
+          <span class="tag">Presigned URL</span>
+          <span class="tag yellow">语义分裂</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>~ 感谢阅读 nya~ 🐱✨</p>
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
