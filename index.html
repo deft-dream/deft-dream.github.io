@@ -689,3 +689,51 @@
         </div>
 
         >
+  <footer>
+    <div style="text-align:center;margin-bottom:16px;">
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+      <span style="color:var(--text-dim);margin:0 8px;">‧</span>
+      <img src="/assets/images/cat-final.png" alt="cat" style="width:24px;height:24px;vertical-align:middle;opacity:0.7;">
+    </div>
+    <div class="footer-content">
+      <p>© 2026 <span class="neon-text">DARKSEC</span> CYBERCAT SECURITY LAB <img src="/assets/images/cat-final.png" alt="cat" style="width:1.2em;height:1.2em;vertical-align:middle;"></p>
+      <p class="quote">「 漏洞不会消失，只会转移 nya~ 」</p>
+      <div class="links">
+        <a href="https://github.com/deft-dream" target="_blank">GitHub</a>
+        <span>·</span>
+        <a href="mailto:s815887892@163.com">Contact</a>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<script>
+// 数字滚动动画
+function animateCounters() {
+  document.querySelectorAll('.val[data-count]').forEach(el => {
+    const target = parseInt(el.dataset.count);
+    const duration = 2000;
+    const start = Date.now();
+    const timer = setInterval(() => {
+      const progress = Math.min((Date.now() - start) / duration, 1);
+      el.textContent = Math.floor(progress * target);
+      if (progress >= 1) clearInterval(timer);
+    }, 16);
+  });
+}
+
+// 触发动画
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      animateCounters();
+      observer.disconnect();
+    }
+  });
+});
+observer.observe(document.querySelector('.hero-stats'));
+</script>
+</body>
+</html>
